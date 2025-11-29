@@ -1,0 +1,28 @@
+# Ignore environment files 
+.venv/
+
+# Ignore full data folders
+raw_data/
+input_data/lidar_patches/
+input_data/s2_patches/
+
+# Ignore saved models
+models/
+
+# Ignore login file
+copernicus_login.py
+
+# Ignore reconstruction outputs
+reconstructions/
+
+# Ignore wandb files
+wandb/
+
+# Ignore cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore old files
+old_stuff/
