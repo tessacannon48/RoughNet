@@ -1,6 +1,6 @@
 
 # Mapping Arctic Ice Terrain Using Diffusion-Based Super-Resolution of Satellite Imagery
-![alt text]()
+![alt text](https://github.com/tessacannon48/RoughNet/blob/main/figures/model_diagram_temp.png)
 
 ## About The Project
 
@@ -50,8 +50,6 @@ surface topography mapping during the annual IceBird sea ice surveying campaigns
 scanner mounted on a Basler BT67 airplane in April 2024 (Pond Inlet: 26-04-24, Cambridge: 18-04-24, Tuktoyaktuk: 16-04-24; Haas et al., 2024). 
 
 ### Satellite Images
-![alt text](https://github.com/tessacannon48/Dissertation/blob/main/figures/sentinel2_images.png)
-
 **Provider:** [ESA Copernicus Data Space](https://dataspace.copernicus.eu/)
 
 The multispectral satellite imagery used in this study is obtained from the European Space Agency’s (ESA) Sentinel-2 mission. Four of the 13 bands, RGB+NIR (10 m), were selected for this study due to their high spatial resolution and their ability to capture fine-scale surface texture and reflectance characteristics.
@@ -59,7 +57,7 @@ The multispectral satellite imagery used in this study is obtained from the Euro
 ---
 
 ## Dataset Construction
-![alt text](https://github.com/tessacannon48/Dissertation/blob/main/figures/sample_patch.png)
+![alt text](https://github.com/tessacannon48/RoughNet/blob/main/figures/sample_patch.png)
 
 1. Preprocessing
 - Script: `/Dissertation/scripts/lidar_preprocessing.py`  
@@ -81,9 +79,7 @@ The multispectral satellite imagery used in this study is obtained from the Euro
 ---
 
 ## Model
-![alt text](https://github.com/tessacannon48/Dissertation/blob/main/figures/model_diagram.png)
 
-### Model
 The model is a conditional U-Net diffusion architecture designed for cross-modal generation. It takes the noisy single-channel LiDAR patch as input and conditions on a collocated, fused representation of Sentinel-2 patches, where the Sentinel-2 inputs are spatially aggregated using learned, attribute-dependent weights. The network is trained to iteratively recover high-resolution synthetic elevation maps from noisy inputs, guided by the conditioning. The forward sampling process follows the Pseudo Linear Multi-Step (PLMS) framework in order to accelerate convergence and improve sample quality.
 
 Note that the modeling setup enables dynamic adjustment of the model architecture to allow for ablation studies of architectural variants and sampling methods. 
