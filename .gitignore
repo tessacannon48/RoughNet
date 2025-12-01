@@ -3,8 +3,12 @@
 
 # Ignore full data folders
 raw_data/
-input_data/lidar_patches/
-input_data/s2_patches/
+input_data/lidar_patches_pondinlet/
+input_data/s2_patches_pondinlet/
+input_data/lidar_patches_tuk/
+input_data/s2_patches_tuk/
+input_data/lidar_patches_cambridge/
+input_data/s2_patches_cambridge/
 
 # Ignore saved models
 models/
@@ -17,6 +21,12 @@ reconstructions/
 
 # Ignore wandb files
 wandb/
+
+# Ignore raw figure outputs
+figures/final_test_cambridge/
+figures/final_val_pondinlet/
+figures/final_val_tuk/
+figures/final_report_figures/
 
 # Ignore cache
 __pycache__/

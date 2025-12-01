@@ -1,0 +1,62 @@
+[
+  {
+    "product_id": "b0b5386b-83a9-4434-b3e6-5de5b680a269",
+    "product_name": "S2A_MSIL2A_20240422T173911_N0510_R098_T17XNA_20240423T004122.SAFE",
+    "acquisition_date": "2024-04-22",
+    "cloud_cover": 15.895501,
+    "sun_zenith_mean": 60.0988138942021,
+    "sun_azimuth_mean": 187.774354022662,
+    "view_zenith_mean": 2.941314771360184,
+    "view_azimuth_mean": 225.56265792440212
+  },
+  {
+    "product_id": "311e98e3-1187-4741-b46c-aa4f2dd9697a",
+    "product_name": "S2B_MSIL2A_20240424T172859_N0510_R055_T17XNA_20240424T195611.SAFE",
+    "acquisition_date": "2024-04-24",
+    "cloud_cover": 86.25809,
+    "sun_zenith_mean": 59.3615928801735,
+    "sun_azimuth_mean": 185.0699758623,
+    "view_zenith_mean": 4.840387499646864,
+    "view_azimuth_mean": 121.08991789372324
+  },
+  {
+    "product_id": "2ef3ac85-4dcf-4d2e-af40-6e11b3752af6",
+    "product_name": "S2A_MSIL2A_20240426T171901_N0510_R012_T17XNA_20240426T223050.SAFE",
+    "acquisition_date": "2024-04-26",
+    "cloud_cover": 98.57958,
+    "sun_zenith_mean": 58.6730614780444,
+    "sun_azimuth_mean": 182.365047089632,
+    "view_zenith_mean": 9.060022473333454,
+    "view_azimuth_mean": 117.31001801685498
+  },
+  {
+    "product_id": "3534328a-c9e5-44e5-b027-ea8502f4d98c",
+    "product_name": "S2B_MSIL2A_20240427T173859_N0510_R098_T17XNA_20240427T200733.SAFE",
+    "acquisition_date": "2024-04-27",
+    "cloud_cover": 97.17834,
+    "sun_zenith_mean": 58.4895292927208,
+    "sun_azimuth_mean": 188.074587041281,
+    "view_zenith_mean": 2.94056136529435,
+    "view_azimuth_mean": 224.26880632699033
+  },
+  {
+    "product_id": "c11a62aa-7055-464a-9ff5-46edb31a7954",
+    "product_name": "S2A_MSIL2A_20240429T172901_N0510_R055_T17XNA_20240429T222851.SAFE",
+    "acquisition_date": "2024-04-29",
+    "cloud_cover": 94.552869,
+    "sun_zenith_mean": 57.7861987340244,
+    "sun_azimuth_mean": 185.356352430628,
+    "view_zenith_mean": 4.8253431518264325,
+    "view_azimuth_mean": 119.45676264755015
+  },
+  {
+    "product_id": "04d539a2-fb0d-435e-bda6-4d2799a05730",
+    "product_name": "S2B_MSIL2A_20240430T174909_N0510_R141_T17XNA_20240430T201515.SAFE",
+    "acquisition_date": "2024-04-30",
+    "cloud_cover": 72.013462,
+    "sun_zenith_mean": 57.6929158663892,
+    "sun_azimuth_mean": 191.086003999161,
+    "view_zenith_mean": 7.0543898942722585,
+    "view_azimuth_mean": 303.40365660775024
+  }
+]
