@@ -26,7 +26,6 @@ wandb/
 figures/final_test_cambridge/
 figures/final_val_pondinlet/
 figures/final_val_tuk/
-figures/final_report_figures/
 
 # Ignore cache
 __pycache__/

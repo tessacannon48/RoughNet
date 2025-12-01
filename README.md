@@ -246,19 +246,19 @@ Before running: At the top of `evaluation.py`, inside the `get_region_preset()` 
 
 Example runs: 
 
-# Validation region 1 – Pond Inlet, zone_ids=[4]
+#### Validation region 1 – Pond Inlet, zone_ids=[4]
 ```bash
 python evaluation.py --region pondinlet
 ```
-# Validation region 2 – Tuktoyaktuk, zone_ids=[13]
+#### Validation region 2 – Tuktoyaktuk, zone_ids=[13]
 ```bash
 python evaluation.py --region tuk
 ```
-# Test region – Cambridge Bay, all tiles
+#### Test region – Cambridge Bay, all tiles
 ```bash
 python evaluation.py --region cambridge
 ```
-# Reuse existing mosaics for Pond Inlet
+#### Reuse existing mosaics for Pond Inlet
 ```bash
 python evaluation.py --region pondinlet --skip-predict
 ```
