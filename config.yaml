@@ -4,16 +4,16 @@
 data:
   train_locations: 
     - "pondinlet"
-    - "tuq"
+    - "tuk"
   validation_regions:
     - 4
     - 13
-  evaluation_patch_ids: ["01851", "01857", "01924",  "02015", "02035", "02047","05510","05511"]
+  evaluation_patch_ids: ["05275","05301", "05400", "05408", "12520","12530","12544","12551"]
   s2_dirs: 
-    - "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/input_data/s2_patches_pondinlet"
+    - "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/input_data/s2_patches_pondinlet_2024"
     - "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/input_data/s2_patches_tuk"
   lidar_dirs: 
-    - "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/input_data/lidar_patches_pondinlet"
+    - "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/input_data/lidar_patches_pondinlet_2024"
     - "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/input_data/lidar_patches_tuk"
   # meters per pixel for LiDAR/residual raster
   pixel_size_m: 1.0
@@ -41,7 +41,7 @@ model:
 
 # Logging and saving
 logging:
-  wandb_project: "revised_dissertation"
+  wandb_project: "rough_net"
   wandb_name: null
   run_name: "default_run"
   save_dir: "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/models"

@@ -153,6 +153,37 @@ class LidarS2Dataset(Dataset):
         while len(feats) < self.max_s2:
             feats.append(torch.zeros(8))
         return feats  # list of length max_s2, each [8]
+    
+    @staticmethod
+    def _demean_lidar_patch(data_1hw: torch.Tensor,
+                            mask_hw: torch.Tensor,
+                            eps: float = 1e-6) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Patch-wise mean removal using ONLY valid pixels.
+
+        Args:
+            data_1hw: [1, H, W] float32
+            mask_hw:  [H, W] float32 or bool (1=valid, 0=invalid)
+        Returns:
+            data_demeaned: [1, H, W]
+            patch_mean:    scalar tensor (float32) mean over valid pixels
+        """
+        # Ensure float mask in {0,1}
+        m = mask_hw.float()
+        m = (m > 0.5).float()
+
+        # Weighted mean over valid pixels
+        denom = m.sum().clamp_min(eps)
+        patch_mean = (data_1hw[0] * m).sum() / denom
+
+        # Subtract mean everywhere 
+        data_demeaned = data_1hw - patch_mean.view(1, 1, 1)
+
+        # Zero-out invalid pixels so they don't carry arbitrary values
+        data_demeaned = data_demeaned * m.view(1, *m.shape)
+
+        return data_demeaned, patch_mean
+
 
     def __len__(self):
         return self.num_samples
@@ -193,6 +224,9 @@ class LidarS2Dataset(Dataset):
         else:
             data = lidar_full[0:1]
             mask = lidar_full[1]
+
+        # Patch-wise mean removal (valid pixels only)
+        data, patch_mean = self._demean_lidar_patch(data, mask)
 
         # Read only the chosen S2 times
         s2_list = []
