@@ -35,3 +35,6 @@ __pycache__/
 
 # Ignore old files
 old_stuff/
+
+# Local data
+input_data/
