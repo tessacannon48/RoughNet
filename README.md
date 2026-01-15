@@ -168,23 +168,23 @@ jupyter notebook data_collocation.ipynb
 ```
    - This notebook identifies all Sentinel-2 Level-2A products that cover the LiDAR collection area, filters for usable (cloud-free) imagery, and prepares them for training. 
 
-2. In cell 3, set:
-   - Your Copernicus Data Space (CDSE) username and password
-   - The LiDAR `.tif` directory path (e.g., `raw_data/pondinlet_lidar`)
-   - The date range for Sentinel-2 products to query (+/- 4 days of the LiDAR collection date)
+2. In cell 4, set:
+   - Your Copernicus Data Space (CDSE) username and password (or import it from separate file)
+   - The LiDAR `.tif` directory path (e.g., `raw_data/pondinlet_lidar_2024`)
+   - The date range for Sentinel-2 products to query (+/- 14 days of the LiDAR collection date)
      
-3. Execute cells 3-5 to:
-   - Cell 3: Query CDSE to find Sentinel-2 products that overlap with the LiDAR area.
-   - Cell 4: Filter the CDSE search results to products that cover 100% of the LiDAR area.
-   - Cell 5: Visualize tiles of all of the remaining Sentinel-2 products (single band visualization to reduce processing). 
+3. Execute cells 4-6 to:
+   - Cell 4: Query CDSE to find Sentinel-2 products that overlap with the LiDAR area.
+   - Cell 5: Filter the CDSE search results to products that cover 100% of the LiDAR area.
+   - Cell 6: Visualize tiles of all of the remaining Sentinel-2 products (single band visualization to reduce processing). 
 
-4. In cell 6, set: 
+4. In cell 7, set: 
    - The directory where you would lke the products to be downloaded to (e.g., `./raw_data/pondinlet_sentinel_downloads`)
    - After visually inspecting the figures from Cell 5, enter a list of the best products (identified by the integer label in the subtitle of each image) from best to worst visibility in the `selected_product_indices` list (e.g., [8,16,22,21,23,6])
 
-5. Execute cells 6-7 to:
-   - Cell 6: Download the selected Sentinel-2 products to the specified directory. 
-   - Cell 7: Unzip the zip files (numbered by the custom order you identified in cell 6). 
+5. Execute cells 7-8 to:
+   - Cell 7: Download the selected Sentinel-2 products to the specified directory. 
+   - Cell 8: Unzip the zip files (numbered by the custom order you identified in cell 6). 
 
 ### Patching
 
@@ -195,25 +195,16 @@ jupyter notebook patching.ipynb
    - This notebook extracts spatially aligned Sentinel-2 and LiDAR patch sets to prepare datasets for model training.
 
 2. Set the input and output paths in cell 3:
-   ```python
-   s2_dir = "path/to/sentinel_downloads"
-   lidar_dir = "/path/to/lidar_tifs"
-   out_lidar_dir = "path/to/outbound_lidar_patches"
-   out_s2_dir = "path/to/outbound_s2_patches"
-   ```
-
-- Replace these with your own Sentinel-2 and LiDAR directories.
-- Output directories are where the patch sets will be stored.
+  - Replace these with your own Sentinel-2 and LiDAR paths.
+  - Output directories are where the patch sets will be stored.
      
-3. Execute cells 4-5 to:
-   - Cell 4: Merge LiDAR files
-   - Cell 5: Divide LiDAR into 10 regions with roughly equal number of patches
-   - Cell 6: Execute patching:
+3. Execute cell 5 to:
+   - Divide LiDAR into 10 regions with roughly equal number of patches
+   - Execute patching:
       - Stacks Sentinel-2 bands (RBG + NIR)
       - Slides window across LiDAR region
       - Transforms LiDAR bounds to extract corresponding Sentinel-2 patch
       - Saves each Sentinel-2 patch set + metadata and LiDAR patch set to out directories (patches are paired using tile IDs ex. 00001)
-      - Visualizes sample patch sets.
 
 ### Training
 
