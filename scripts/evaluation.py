@@ -94,8 +94,8 @@ def get_region_preset(region_name: str):
         "pretty_name": pretty_name,            
         "zone_ids": zone_ids,
         "ckpt_path": ckpt_path,
-        "s2_dir":    f"{root}/input_data/s2_patches_{key}_2024",
-        "lidar_dir": f"{root}/input_data/lidar_patches_{key}_2024",
+        "s2_dir":    f"{root}/input_data/s2_patches_{key}",
+        "lidar_dir": f"{root}/input_data/lidar_patches_{key}",
         "out_dir":   f"{root}/figures/{out_prefix}_{key}",
     }
 
@@ -296,6 +296,7 @@ def _compute_metrics_tensor(gt_t, pr_t, mask_t, px, jsd_scales, jsd_bins, use_so
     abs_rel = torch.abs(gt_t - pr_t) / (gt_t + 1e-6)
     abs_rel = abs_rel[valid_mask]
     abs_rel_error = float(abs_rel.mean().item()) if abs_rel.numel() > 0 else float("nan")
+    abs_rel_error = -9999.0
 
     return {
         "rmse_phys_m": float(rmse_recon(gt_t, pr_t, mask=mask_t).item()),
@@ -768,7 +769,14 @@ def run_predictions_and_mosaics(ckpt_path, config_yaml, out_dir,
         lidar  = batch["lidar"].to(device)
         tile_ids_batch = batch["tile_id"]
 
-        pred = sampler(model, lidar.shape, s2, attrs, device).float().cpu().numpy()
+        pred = sampler(model, lidar.shape, s2, attrs, device).float()
+
+        # Add mean back 
+        pm = batch.get("lidar_patch_mean", None)
+        pm = pm.to(device).view(-1, 1, 1, 1)  # [B,1,1,1]
+        pred = pred + pm
+
+        pred = pred.cpu().numpy()
 
         B = pred.shape[0]
         for i in range(B):

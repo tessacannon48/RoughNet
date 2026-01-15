@@ -266,7 +266,8 @@ class LidarS2Dataset(Dataset):
             "mask": mask.float(),
             "attrs": attrs.float(),
             "chosen_ids": torch.tensor(chosen_ids, dtype=torch.long),
-            "tile_id": tile_id
+            "tile_id": tile_id,
+            "lidar_patch_mean": patch_mean.float(), 
         }
 
 
