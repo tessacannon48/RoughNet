@@ -18,9 +18,13 @@ import matplotlib.colors as mcolors
 import warnings
 import matplotlib.ticker as ticker
 import argparse
+from rasterio.shutil import delete as rio_delete
+from scipy.ndimage import gaussian_filter1d
 
 # Add parent directory to sys.path for module imports
-sys.path.append(os.path.abspath(os.path.join(os.getcwd(), '..')))
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 # Project imports
 from src.data.dataset import LidarS2Dataset
@@ -65,8 +69,8 @@ def get_region_preset(region_name: str):
 
     root = "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation"
 
-    # Single checkpoint for now – change here if you ever have region-specific models
-    ckpt_path = f"{root}/models/pondinlet_tuq_modelD_k6_att_best.pth"
+    # Specify checkpoint
+    ckpt_path = f"{root}/models/og_final_model_k6_att_best.pth"
 
     # Pretty names only for plot titles
     if key == "pondinlet":
@@ -87,14 +91,13 @@ def get_region_preset(region_name: str):
 
     return {
         "region_key": key,         
-        "pretty_name": pretty_name,            # for titles only
+        "pretty_name": pretty_name,            
         "zone_ids": zone_ids,
         "ckpt_path": ckpt_path,
-        "s2_dir":    f"{root}/input_data/s2_patches_{key}",
-        "lidar_dir": f"{root}/input_data/lidar_patches_{key}",
+        "s2_dir":    f"{root}/input_data/s2_patches_{key}_2024",
+        "lidar_dir": f"{root}/input_data/lidar_patches_{key}_2024",
         "out_dir":   f"{root}/figures/{out_prefix}_{key}",
     }
-
 
 
 # === UTILS ====================================================================
@@ -185,7 +188,6 @@ def mosaic_average_safe(tif_list, out_path, compress=None):
         if compress:
             prof["compress"] = compress
         try:
-            from rasterio.shutil import delete as rio_delete
             if os.path.exists(out_path):
                 rio_delete(out_path)
         except Exception:
@@ -200,7 +202,7 @@ def mosaic_average_safe(tif_list, out_path, compress=None):
 
 # === VISUALIZATION =============================================================
 def plot_2d_maps(gt_array, pred_array, diff_array, out_path):
-    # Mask zero => NaN (common for empty cells)
+    # Mask zero => NaN 
     gt_array = np.where(gt_array == 0, np.nan, gt_array)
     pred_array = np.where(pred_array == 0, np.nan, pred_array)
     diff_array = np.where(diff_array == 0, np.nan, diff_array)
@@ -381,7 +383,7 @@ def compute_and_save_patch_metrics(out_dir, cfg):
 
     rows = []
     for pred_fp in tqdm(pred_tifs, desc="Per-patch metrics"):
-        # tile_id inferred from filename pred_{tileid}.tif
+        # tile_id taken from filename pred_{tileid}.tif
         basename = os.path.basename(pred_fp)
         tile_id = basename[len("pred_"):-4]
 
@@ -391,7 +393,7 @@ def compute_and_save_patch_metrics(out_dir, cfg):
             gt = g.read(1).astype(np.float32)
             pr = p.read(1).astype(np.float32)
 
-            # Align if needed (shouldn't be necessary, but safe)
+            # Align 
             if (gt.shape != pr.shape) or (g.transform != p.transform):
                 pr_aligned = np.zeros_like(gt, dtype=np.float32)
                 reproject(
@@ -404,7 +406,7 @@ def compute_and_save_patch_metrics(out_dir, cfg):
 
         mask_np = _valid_mask_from_arrays(gt, pr)
         if not np.any(mask_np):
-            # still record the tile with NaNs so you can inspect failures
+            # still record the tile with NaNs to inspect failures
             row = {"tile_id": tile_id, "valid_pixel_count": 0}
             for k in ["rmse_phys_m","bias_phys_m","sigma_error_pct","corr_length_error_pct",
                       "normal_angle_error_deg","jsd","psd_rmse",
@@ -455,7 +457,7 @@ def compute_and_save_patch_metrics(out_dir, cfg):
             writer.writerow(r)
     print(f"Saved per-patch reconstruction CSV → {csv_path}")
 
-    # Also compute and print averages across patches
+    # Compute and print averages across patches
     def _nanmean(vals):
         arr = np.array(vals, dtype=np.float64)
         return float(np.nanmean(arr)) if arr.size else float("nan")
@@ -489,9 +491,9 @@ def plot_region_pdfs(gt_array, pred_array, out_path,
                      smooth_sigma=None, logy=False, title=None):
     """
     Plot PDFs (density curves) of GT vs Prediction for the whole region.
-    - x-axis is limited using percentiles of the *masked* combined data.
+    - x-axis is limited using percentiles of the masked combined data.
     - JSD between the two (discrete) distributions is computed and annotated.
-    - Optionally smooth with a Gaussian kernel in 1D (if scipy is available).
+    - Optionally smooth with a Gaussian kernel in 1D.
 
     Args:
       gt_array, pred_array: 2D ndarrays (aligned mosaics, float)
@@ -502,10 +504,8 @@ def plot_region_pdfs(gt_array, pred_array, out_path,
       logy: if True, use log-scale on Y axis
       title: optional figure title
     """
-    import matplotlib.pyplot as plt
-    import numpy as np
 
-    # Valid mask: drop NaNs and zeros (your convention for empties)
+    # Valid mask: drop NaNs and zeros 
     mask = (~np.isnan(gt_array)) & (~np.isnan(pred_array)) & (gt_array != 0) & (pred_array != 0)
     gt = gt_array[mask].astype(np.float64)
     pr = pred_array[mask].astype(np.float64)
@@ -525,21 +525,16 @@ def plot_region_pdfs(gt_array, pred_array, out_path,
     bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
     bin_width = bin_edges[1] - bin_edges[0]
 
-    # Histograms → densities (integrate to 1 over [xmin, xmax])
+    # Histograms - densities (integrate to 1 over [xmin, xmax])
     gt_hist, _ = np.histogram(gt, bins=bin_edges, density=True)
     pr_hist, _ = np.histogram(pr, bins=bin_edges, density=True)
 
-    # Optional smoothing (if scipy present)
+    # Smoothing
     if smooth_sigma is not None and smooth_sigma > 0:
-        try:
-            from scipy.ndimage import gaussian_filter1d
-            gt_hist = gaussian_filter1d(gt_hist, sigma=smooth_sigma, mode="nearest")
-            pr_hist = gaussian_filter1d(pr_hist, sigma=smooth_sigma, mode="nearest")
-        except Exception:
-            # If SciPy isn't available, just continue without smoothing
-            pass
+        gt_hist = gaussian_filter1d(gt_hist, sigma=smooth_sigma, mode="nearest")
+        pr_hist = gaussian_filter1d(pr_hist, sigma=smooth_sigma, mode="nearest")
 
-    # --- JSD between discrete distributions on these bins ---
+    # JSD between discrete distributions on these bins
     # Convert densities to probability masses on each bin (~density * bin_width), then normalize
     eps = 1e-12
     p = gt_hist * bin_width
@@ -559,7 +554,7 @@ def plot_region_pdfs(gt_array, pred_array, out_path,
             return float(np.sum(a_safe * np.log(a_safe / b_safe)))
         jsd = 0.5 * _kl(p, m) + 0.5 * _kl(q, m)
 
-    # --- Plot ---
+    # Plot 
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.plot(bin_centers, gt_hist, label=f"Ground truth (n={gt.size:,})", linewidth=2)
     ax.plot(bin_centers, pr_hist, label=f"Prediction (n={pr.size:,})", linewidth=2, linestyle="--")
@@ -585,7 +580,7 @@ def plot_region_pdfs(gt_array, pred_array, out_path,
     plt.close(fig)
     print(f"Saved region PDF plot → {out_path}")
 
-    # Also drop a tiny sidecar JSON with the settings + JSD
+    # Drop a tiny sidecar JSON with the settings + JSD
     meta = {
         "bins": bins,
         "low_pct": low_pct,
@@ -888,9 +883,9 @@ def main():
 
     args = parser.parse_args()
 
-    # -------------------------------------------------------------------------
+    
     # Resolve region preset (paths + zone_ids + ckpt_path)
-    # -------------------------------------------------------------------------
+    
     preset = get_region_preset(args.region)
     region_key      = preset["region_key"]      
     region_name     = preset["pretty_name"]     
@@ -902,9 +897,9 @@ def main():
 
     os.makedirs(out_dir, exist_ok=True)
 
-    # -------------------------------------------------------------------------
+    
     # Device + load config from checkpoint once
-    # -------------------------------------------------------------------------
+    
     device = args.device
     if torch.cuda.is_available():
         device = "cuda"
@@ -915,7 +910,7 @@ def main():
     ckpt_tmp = torch.load(CKPT_PATH, map_location=device)
     config = ckpt_tmp["config"]
 
-    # Override paths for eval data (all lowercase/no spaces)
+    # Override paths for eval data
     config["data"]["s2_dir"]    = TEST_S2_DIR
     config["data"]["lidar_dir"] = TEST_LIDAR_DIR
     if "logging" in config:
@@ -923,9 +918,9 @@ def main():
     if "system" in config:
         config["system"]["device"] = device
 
-    # -------------------------------------------------------------------------
+    
     # Prediction (or reuse existing mosaics)
-    # -------------------------------------------------------------------------
+    
     pred_mosaic_path = os.path.join(out_dir, "pred_mosaic.tif")
     gt_mosaic_path   = os.path.join(out_dir, "gt_mosaic.tif")
 
@@ -956,16 +951,15 @@ def main():
             deterministic_order=args.deterministic_order,
         )
 
-    # -------------------------------------------------------------------------
     # Alignment + plots + metrics
-    # -------------------------------------------------------------------------
+   
     gt_array, pred_array, diff_array, diff_path = align_and_save_diff(
         pred_mosaic_path=pred_mosaic_path,
         gt_mosaic_path=gt_mosaic_path,
         out_dir=out_dir,
     )
 
-    # Region PDF figure – filename uses lowercase key, title uses pretty name
+    # Region PDF figure 
     pdf_path = os.path.join(out_dir, f"{region_key}_pdfs.png")
     plot_region_pdfs(
         gt_array,
