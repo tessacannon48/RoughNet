@@ -21,12 +21,10 @@ import argparse
 from rasterio.shutil import delete as rio_delete
 from scipy.ndimage import gaussian_filter1d
 
-# Add parent directory to sys.path for module imports
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-# Project imports
 from src.data.dataset import LidarS2Dataset
 from src.model.unet import ConditionalUNet
 from src.diffusion.scheduler import LinearDiffusionScheduler, CosineDiffusionScheduler
@@ -44,22 +42,9 @@ from src.utils.recon_metrics import (
 
 warnings.filterwarnings("ignore")
 
-# === REGION PRESETS ====================================================
+NODATA = -9999.0
 
 def get_region_preset(region_name: str):
-    """
-    region_name:
-        expected strings (case-insensitive):
-        - 'pondinlet'
-        - 'tuk'
-        - 'cambridge'
-
-    Returns a small config bundle:
-        - region_key: lowercase, no whitespace (for dirs, filenames)
-        - pretty_name: for plot titles only
-        - zone_ids: [4] for Pond Inlet, [13] for Tuk, None for Cambridge
-        - ckpt_path, s2_dir, lidar_dir, out_dir
-    """
     key = region_name.strip().lower()
     if key not in ("pondinlet", "tuk", "cambridge"):
         raise ValueError(
@@ -68,30 +53,26 @@ def get_region_preset(region_name: str):
         )
 
     root = "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation"
-
-    # Specify checkpoint
     ckpt_path = f"{root}/models/og_final_model_k6_att_best.pth"
 
-    # Pretty names only for plot titles
     if key == "pondinlet":
         pretty_name = "Pond Inlet"
         zone_ids = [4]
     elif key == "tuk":
         pretty_name = "Tuktokaktuk"
         zone_ids = [13]
-    else:  # key == "cambridge"
+    else:
         pretty_name = "Cambridge Bay"
-        zone_ids = None  
+        zone_ids = None
 
-    # Validation vs test output dirs 
     if key in ("pondinlet", "tuk"):
         out_prefix = "final_val"
     else:
         out_prefix = "final_test"
 
     return {
-        "region_key": key,         
-        "pretty_name": pretty_name,            
+        "region_key": key,
+        "pretty_name": pretty_name,
         "zone_ids": zone_ids,
         "ckpt_path": ckpt_path,
         "s2_dir":    f"{root}/input_data/s2_patches_{key}",
@@ -99,10 +80,8 @@ def get_region_preset(region_name: str):
         "out_dir":   f"{root}/figures/{out_prefix}_{key}",
     }
 
-
-# === UTILS ====================================================================
 def load_checkpoint(ckpt_path, device):
-    assert isinstance(ckpt_path, (str, bytes, os.PathLike)), "ckpt_path must be a filepath string."
+    assert isinstance(ckpt_path, (str, bytes, os.PathLike))
     ckpt_path = str(ckpt_path)
     if not os.path.exists(ckpt_path):
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
@@ -151,85 +130,87 @@ def find_lidar_patch(lidar_dir, tile_id):
 def write_tif_like(ref_tif, out_path, array_2d_float32):
     with rasterio.open(ref_tif) as ref:
         prof = ref.profile.copy()
+
     prof.update(
-        dtype="float32", count=1, compress="deflate", predictor=3, tiled=True,
-        blockxsize=min(256, prof["width"]), blockysize=min(256, prof["height"]),
-        BIGTIFF="IF_SAFER"
+        dtype="float32",
+        count=1,
+        nodata=float(NODATA),
+        compress="deflate",
+        predictor=3,
+        tiled=True,
+        blockxsize=min(256, prof["width"]),
+        blockysize=min(256, prof["height"]),
+        BIGTIFF="IF_SAFER",
     )
+
+    arr = array_2d_float32.astype(np.float32)
+    arr = np.where(np.isfinite(arr), arr, NODATA).astype(np.float32)
+
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     with rasterio.open(out_path, "w", **prof) as dst:
-        dst.write(array_2d_float32.astype(np.float32), 1)
+        dst.write(arr, 1)
 
-def mosaic_average_safe(tif_list, out_path, compress=None):
-    assert len(tif_list) > 0, "No input tiles to mosaic."
+def build_averaged_mosaic(tif_list, out_path, compress=None, nodata=NODATA):
+    assert len(tif_list) > 0
     srcs = [rasterio.open(fp) for fp in tif_list]
     try:
-        nodatas = [s.nodata for s in srcs]
-        merge_kwargs = {}
-        if all(nd == nodatas[0] for nd in nodatas) and (nodatas[0] is not None):
-            merge_kwargs["nodata"] = nodatas[0]
-        sum_arr, transform = rio_merge(srcs, method="sum", **merge_kwargs)
-        cnt_arr, _         = rio_merge(srcs, method="count", **merge_kwargs)
-        denom = np.maximum(cnt_arr.astype(np.float32), 1.0)
-        avg2d = (sum_arr.astype(np.float32) / denom)[0]
+        mosaic, transform = rio_merge(srcs, nodata=nodata)
+        arr = mosaic[0].astype(np.float32)
+        arr = np.where(np.isfinite(arr), arr, nodata).astype(np.float32)
+
         ref = srcs[0]
         prof = {
             "driver": "GTiff",
-            "height": int(avg2d.shape[0]),
-            "width":  int(avg2d.shape[1]),
+            "height": int(arr.shape[0]),
+            "width":  int(arr.shape[1]),
             "count":  1,
             "dtype":  "float32",
             "crs":    ref.crs,
             "transform": transform,
             "tiled": False,
+            "nodata": float(nodata),
         }
-        if merge_kwargs.get("nodata", None) is not None:
-            prof["nodata"] = merge_kwargs["nodata"]
         if compress:
             prof["compress"] = compress
-        try:
-            if os.path.exists(out_path):
+
+        if os.path.exists(out_path):
+            try:
                 rio_delete(out_path)
-        except Exception:
-            if os.path.exists(out_path):
+            except Exception:
                 os.remove(out_path)
+
         with rasterio.open(out_path, "w", **prof) as dst:
-            dst.write(avg2d, 1)
+            dst.write(arr, 1)
     finally:
         for s in srcs:
             s.close()
     return out_path
 
-# === VISUALIZATION =============================================================
-def plot_2d_maps(gt_array, pred_array, diff_array, out_path):
-    # Mask zero => NaN 
-    gt_array = np.where(gt_array == 0, np.nan, gt_array)
-    pred_array = np.where(pred_array == 0, np.nan, pred_array)
-    diff_array = np.where(diff_array == 0, np.nan, diff_array)
-    # Cut the array area in half for better visualization
-    h, w = gt_array.shape
-    h_25th_percentile = h // 4
-    h_75th_percentile = (3 * h) // 4
-    gt_array = gt_array[h_25th_percentile:h_75th_percentile, :]
-    pred_array = pred_array[h_25th_percentile:h_75th_percentile, :]
-    diff_array = diff_array[h_25th_percentile:h_75th_percentile, :]
+def _apply_gt_cleanup(a):
+    a = a.astype(np.float32)
+    a = np.where(a == NODATA, np.nan, a)
+    a = np.where(a == 0.0, np.nan, a)
+    a = np.where(np.isfinite(a), a, np.nan)
+    return a
 
-    # Rotate the arrays
-    gt_array = np.rot90(gt_array)
-    pred_array = np.rot90(pred_array)
-    diff_array = np.rot90(diff_array)
+def _apply_pred_cleanup(a):
+    a = a.astype(np.float32)
+    a = np.where(a == NODATA, np.nan, a)
+    a = np.where(np.isfinite(a), a, np.nan)
+    return a
+
+def plot_2d_maps(gt_array, pred_array, diff_array, out_path):
+    gt_array  = gt_array.astype(np.float32)
+    pred_array= pred_array.astype(np.float32)
+    diff_array= diff_array.astype(np.float32)
 
     stack = np.stack([gt_array, pred_array], axis=0)
     vmin = float(np.nanpercentile(stack, 0.02))
     vmax = float(np.nanpercentile(stack, 99.98))
-    
-    # SymLog for residuals
-    max_abs_error = np.nanmax(np.abs(diff_array))
-    linthresh_val = 0.5  # meters in the linear region
-    norm_error = mcolors.SymLogNorm(
-        linthresh=linthresh_val, linscale=1.0,
-        vmin=-max_abs_error, vmax=max_abs_error
-    )
+
+    d = diff_array[np.isfinite(diff_array)]
+    A = np.percentile(np.abs(d), 99)
+    A = float(max(A, 1e-6))
 
     fig, axes = plt.subplots(3, 1, figsize=(7, 5))
 
@@ -239,7 +220,7 @@ def plot_2d_maps(gt_array, pred_array, diff_array, out_path):
     im1 = axes[1].imshow(pred_array, cmap='terrain', vmin=vmin, vmax=vmax)
     axes[1].set_title("Prediction"); axes[1].axis('off')
 
-    im2 = axes[2].imshow(diff_array, cmap='seismic', norm=norm_error)
+    im2 = axes[2].imshow(diff_array, cmap="seismic", vmin=-A, vmax=+A)
     axes[2].set_title("Error (Pred - GT)"); axes[2].axis('off')
 
     cbar_ax = fig.add_axes([0.05, 0.7, 0.92, 0.02])
@@ -254,7 +235,6 @@ def plot_2d_maps(gt_array, pred_array, diff_array, out_path):
     cbar1.ax.xaxis.set_ticks_position('bottom')
     cbar1.ax.xaxis.set_label_position('bottom')
 
-    # Force raw decimals on symlog colorbar
     formatter = ticker.ScalarFormatter(useOffset=False, useMathText=False)
     formatter.set_scientific(False)
     formatter.set_powerlimits((0, 0))
@@ -270,7 +250,6 @@ def plot_2d_maps(gt_array, pred_array, diff_array, out_path):
     plt.close(fig)
     print(f"Saved 2D composite to {out_path}")
 
-# === METRIC HELPERS ===========================================================
 def _metric_params_from_cfg(cfg):
     px = float(cfg.get("data", {}).get("pixel_size_m", 1.0))
     jsd_scales = tuple(cfg.get("evaluation", {}).get("jsd_scales_m", [1.0, 2.0, 5.0, 10.0]))
@@ -281,22 +260,13 @@ def _metric_params_from_cfg(cfg):
     return px, jsd_scales, jsd_bins, use_sobel, deg, use_window
 
 def _compute_metrics_tensor(gt_t, pr_t, mask_t, px, jsd_scales, jsd_bins, use_sobel, deg, use_window):
-    # Print components of corr_length_error for debugging
-    # Apply full mask
     full_mask = mask_t
-
-    # Add threshold mask to avoid very small ground truth values
-    min_valid_depth = 0.01  # meters
+    min_valid_depth = 0.01
     gt_above_thresh = gt_t > min_valid_depth
-
-    # Combine both masks
     valid_mask = full_mask & gt_above_thresh
-
-    # Compute abs rel only on valid pixels
     abs_rel = torch.abs(gt_t - pr_t) / (gt_t + 1e-6)
     abs_rel = abs_rel[valid_mask]
-    abs_rel_error = float(abs_rel.mean().item()) if abs_rel.numel() > 0 else float("nan")
-    abs_rel_error = -9999.0
+    abs_rel_error = float(abs_rel.mean().item()) if abs_rel.numel() > 0 else -9999.0
 
     return {
         "rmse_phys_m": float(rmse_recon(gt_t, pr_t, mask=mask_t).item()),
@@ -306,13 +276,12 @@ def _compute_metrics_tensor(gt_t, pr_t, mask_t, px, jsd_scales, jsd_bins, use_so
         "normal_angle_error_deg": float(normal_angle_error(gt_t, pr_t, mask=mask_t, pixel_size=px, use_sobel=use_sobel, degrees=deg).item()),
         "jsd": float(average_jsd_multiscale(gt_t, pr_t, scales_m=jsd_scales, pixel_size=px, bins=jsd_bins, mask=mask_t).item()),
         "psd_rmse": float(log_psd_rmse(gt_t, pr_t, pixel_size=px, mask=mask_t, window=use_window).item()),
-	    "abs_rel_error": abs_rel_error,
+        "abs_rel_error": abs_rel_error,
     }
 
 def _valid_mask_from_arrays(gt_array, pred_array):
-    return (~np.isnan(gt_array)) & (~np.isnan(pred_array)) & (gt_array != 0) & (pred_array != 0)
+    return np.isfinite(gt_array) & np.isfinite(pred_array)
 
-# === REGION-WIDE METRICS ======================================================
 def compute_and_save_region_metrics(gt_array, pred_array, out_dir, cfg):
     stats_dir = os.path.join(out_dir, "reconstruction_statistics")
     os.makedirs(stats_dir, exist_ok=True)
@@ -327,7 +296,6 @@ def compute_and_save_region_metrics(gt_array, pred_array, out_dir, cfg):
     px, jsd_scales, jsd_bins, use_sobel, deg, use_window = _metric_params_from_cfg(cfg)
     metrics = _compute_metrics_tensor(gt_t, pr_t, m_t, px, jsd_scales, jsd_bins, use_sobel, deg, use_window)
 
-    # masked stats
     gt_masked = torch.masked_select(gt_t, m_t)
     pr_masked = torch.masked_select(pr_t, m_t)
 
@@ -356,13 +324,7 @@ def compute_and_save_region_metrics(gt_array, pred_array, out_dir, cfg):
         json.dump(region_stats, f, indent=4)
     print(f"Saved region reconstruction stats → {out_json}")
 
-# === PER-PATCH METRICS ========================================================
 def compute_and_save_patch_metrics(out_dir, cfg):
-    """
-    Reads per-patch predicted tiles in OUT_DIR/pred_tiles, matches each to its GT tile,
-    computes reconstruction metrics per patch, and saves a CSV with one row per patch.
-    Also prints macro- and weighted-averages.
-    """
     stats_dir = os.path.join(out_dir, "reconstruction_statistics")
     os.makedirs(stats_dir, exist_ok=True)
 
@@ -376,43 +338,51 @@ def compute_and_save_patch_metrics(out_dir, cfg):
 
     lidar_dir = cfg["data"].get("lidar_dir") or cfg["data"].get("lidar_dirs")
     if isinstance(lidar_dir, list):
-        # choose first if multiple provided
         lidar_dir = lidar_dir[0]
 
-    # metric parameters
     px, jsd_scales, jsd_bins, use_sobel, deg, use_window = _metric_params_from_cfg(cfg)
 
     rows = []
     for pred_fp in tqdm(pred_tifs, desc="Per-patch metrics"):
-        # tile_id taken from filename pred_{tileid}.tif
         basename = os.path.basename(pred_fp)
         tile_id = basename[len("pred_"):-4]
 
         gt_fp = find_lidar_patch(lidar_dir, tile_id)
 
         with rasterio.open(gt_fp) as g, rasterio.open(pred_fp) as p:
-            gt = g.read(1).astype(np.float32)
-            pr = p.read(1).astype(np.float32)
+            gt = g.read(1, masked=True).astype(np.float32)
+            pr = p.read(1, masked=True).astype(np.float32)
 
-            # Align 
+            gt = gt.filled(np.nan)
+            pr = pr.filled(np.nan)
+
+            gt = np.where(gt == NODATA, np.nan, gt)
+            pr = np.where(pr == NODATA, np.nan, pr)
+
+            gt = _apply_gt_cleanup(gt)
+            pr = _apply_pred_cleanup(pr)
+
             if (gt.shape != pr.shape) or (g.transform != p.transform):
-                pr_aligned = np.zeros_like(gt, dtype=np.float32)
+                pr_aligned = np.full_like(gt, NODATA, dtype=np.float32)
                 reproject(
-                    source=pr, destination=pr_aligned,
+                    source=np.where(np.isnan(pr), NODATA, pr).astype(np.float32),
+                    destination=pr_aligned,
                     src_transform=p.transform, src_crs=p.crs,
                     dst_transform=g.transform, dst_crs=g.crs,
-                    resampling=Resampling.bilinear
+                    resampling=Resampling.bilinear,
+                    src_nodata=p.nodata if p.nodata is not None else NODATA,
+                    dst_nodata=NODATA,
                 )
-                pr = pr_aligned
+                pr = np.where(pr_aligned == NODATA, np.nan, pr_aligned).astype(np.float32)
+                pr = _apply_pred_cleanup(pr)
 
         mask_np = _valid_mask_from_arrays(gt, pr)
         if not np.any(mask_np):
-            # still record the tile with NaNs to inspect failures
             row = {"tile_id": tile_id, "valid_pixel_count": 0}
             for k in ["rmse_phys_m","bias_phys_m","sigma_error_pct","corr_length_error_pct",
                       "normal_angle_error_deg","jsd","psd_rmse",
-                      "gt_mean_val","gt_std_val","pred_mean_val","pred_std_val", "abs_rel_error",
-                      "gt_min_val", "gt_max_val", "pred_min_val", "pred_max_val"]:
+                      "gt_mean_val","gt_std_val","pred_mean_val","pred_std_val","abs_rel_error",
+                      "gt_min_val","gt_max_val","pred_min_val","pred_max_val"]:
                 row[k] = float("nan")
             rows.append(row)
             continue
@@ -441,7 +411,6 @@ def compute_and_save_patch_metrics(out_dir, cfg):
         }
         rows.append(row)
 
-    # Save CSV
     csv_path = os.path.join(stats_dir, "patch_reconstruction_stats.csv")
     fieldnames = [
         "tile_id", "valid_pixel_count",
@@ -458,10 +427,10 @@ def compute_and_save_patch_metrics(out_dir, cfg):
             writer.writerow(r)
     print(f"Saved per-patch reconstruction CSV → {csv_path}")
 
-    # Compute and print averages across patches
     def _nanmean(vals):
         arr = np.array(vals, dtype=np.float64)
         return float(np.nanmean(arr)) if arr.size else float("nan")
+
     def _weighted_mean(vals, weights):
         v = np.array(vals, dtype=np.float64)
         w = np.array(weights, dtype=np.float64)
@@ -490,72 +459,48 @@ def compute_and_save_patch_metrics(out_dir, cfg):
 def plot_region_pdfs(gt_array, pred_array, out_path,
                      bins=256, low_pct=0.5, high_pct=99.5,
                      smooth_sigma=None, logy=False, title=None):
-    """
-    Plot PDFs (density curves) of GT vs Prediction for the whole region.
-    - x-axis is limited using percentiles of the masked combined data.
-    - JSD between the two (discrete) distributions is computed and annotated.
-    - Optionally smooth with a Gaussian kernel in 1D.
-
-    Args:
-      gt_array, pred_array: 2D ndarrays (aligned mosaics, float)
-      out_path: path to save the figure (PNG)
-      bins: number of histogram bins
-      low_pct, high_pct: percentiles for x-limits (e.g., 0.5/99.5)
-      smooth_sigma: None or float (std dev in bins) for Gaussian smoothing
-      logy: if True, use log-scale on Y axis
-      title: optional figure title
-    """
-
-    # Valid mask: drop NaNs and zeros 
-    mask = (~np.isnan(gt_array)) & (~np.isnan(pred_array)) & (gt_array != 0) & (pred_array != 0)
+    mask = np.isfinite(gt_array) & np.isfinite(pred_array)
     gt = gt_array[mask].astype(np.float64)
     pr = pred_array[mask].astype(np.float64)
     if gt.size == 0 or pr.size == 0:
         raise ValueError("No valid pixels to build PDFs.")
 
-    # Robust x-limits from combined data
     combined = np.concatenate([gt, pr], axis=0)
     xmin = float(np.percentile(combined, low_pct))
     xmax = float(np.percentile(combined, high_pct))
     if not np.isfinite(xmin) or not np.isfinite(xmax) or xmin >= xmax:
-        # Fallback to overall min/max if percentiles are degenerate
         xmin = float(np.min(combined))
         xmax = float(np.max(combined))
-    # Build common bins
+
     bin_edges = np.linspace(xmin, xmax, bins + 1, dtype=np.float64)
     bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
     bin_width = bin_edges[1] - bin_edges[0]
 
-    # Histograms - densities (integrate to 1 over [xmin, xmax])
     gt_hist, _ = np.histogram(gt, bins=bin_edges, density=True)
     pr_hist, _ = np.histogram(pr, bins=bin_edges, density=True)
 
-    # Smoothing
     if smooth_sigma is not None and smooth_sigma > 0:
         gt_hist = gaussian_filter1d(gt_hist, sigma=smooth_sigma, mode="nearest")
         pr_hist = gaussian_filter1d(pr_hist, sigma=smooth_sigma, mode="nearest")
 
-    # JSD between discrete distributions on these bins
-    # Convert densities to probability masses on each bin (~density * bin_width), then normalize
     eps = 1e-12
     p = gt_hist * bin_width
     q = pr_hist * bin_width
     p_sum = p.sum(); q_sum = q.sum()
     if p_sum <= 0 or q_sum <= 0:
-        # Degenerate case (all-zero densities inside range)
         jsd = float("nan")
     else:
         p = p / (p_sum + eps)
         q = q / (q_sum + eps)
         m = 0.5 * (p + q)
-        # KL with safeguards
+
         def _kl(a, b):
             a_safe = np.clip(a, eps, 1.0)
             b_safe = np.clip(b, eps, 1.0)
             return float(np.sum(a_safe * np.log(a_safe / b_safe)))
+
         jsd = 0.5 * _kl(p, m) + 0.5 * _kl(q, m)
 
-    # Plot 
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.plot(bin_centers, gt_hist, label=f"Ground truth (n={gt.size:,})", linewidth=2)
     ax.plot(bin_centers, pr_hist, label=f"Prediction (n={pr.size:,})", linewidth=2, linestyle="--")
@@ -569,7 +514,6 @@ def plot_region_pdfs(gt_array, pred_array, out_path,
     ax.grid(True, alpha=0.2)
     ax.legend()
 
-    # Annotate JSD
     if np.isfinite(jsd):
         ax.text(0.02, 0.98, f"JSD = {jsd:.4f}", transform=ax.transAxes,
                 ha="left", va="top", fontsize=11,
@@ -581,7 +525,6 @@ def plot_region_pdfs(gt_array, pred_array, out_path,
     plt.close(fig)
     print(f"Saved region PDF plot → {out_path}")
 
-    # Drop a tiny sidecar JSON with the settings + JSD
     meta = {
         "bins": bins,
         "low_pct": low_pct,
@@ -597,28 +540,46 @@ def plot_region_pdfs(gt_array, pred_array, out_path,
     with open(out_path.replace(".png", "_meta.json"), "w") as f:
         json.dump(meta, f, indent=2)
 
-
-# 3D modeling
-
 def subsample(arr, step):
     return arr[::step, ::step]
 
-def plot_single_3d_surface(ax, lidar_array, title="3D LiDAR Surface Plot",
-                           cmap='terrain', z_label='Elevation Deviations (m)',
-                           vmin=None, vmax=None):
-    # treat zeros as NaN for visualization
-    lidar_array = np.where(lidar_array == 0, np.nan, lidar_array)
-    h, w = lidar_array.shape
+def shared_vmin_vmax(gt, pr, pct_low=1, pct_high=99, symmetric=False):
+    v = np.concatenate([gt[np.isfinite(gt)], pr[np.isfinite(pr)]])
+    if v.size == 0:
+        return (-1.0, 1.0)
+    if symmetric:
+        A = float(np.percentile(np.abs(v), pct_high))
+        A = max(A, 1e-6)
+        return (-A, +A)
+    vmin = float(np.percentile(v, pct_low))
+    vmax = float(np.percentile(v, pct_high))
+    if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin >= vmax:
+        vmin = float(np.nanmin(v))
+        vmax = float(np.nanmax(v))
+    return (vmin, vmax)
+
+def plot_single_3d_surface(ax, lidar_array, title="3D",
+                           cmap='terrain', z_label='LiDAR Residual (m)',
+                           vmin=None, vmax=None, zmin=None, zmax=None):
+    Z = lidar_array.astype(np.float32)
+    mask = np.isfinite(Z)
+    Zm = np.ma.array(Z, mask=~mask)
+
+    h, w = Z.shape
     X, Y = np.meshgrid(np.arange(w), np.arange(h))
-    ax.set_zlim(-1.5, 1.5)
+
     surf = ax.plot_surface(
-        X, Y, lidar_array,
+        X, Y, Zm,
         cmap=cmap, alpha=0.9, edgecolor='none',
         rstride=1, cstride=1, vmin=vmin, vmax=vmax
     )
-    # set x and y lims
-    ax.set_xlim(0, 550)
-    ax.set_ylim(0, 250)
+
+    ax.set_xlim(0, w - 1)
+    ax.set_ylim(0, h - 1)
+
+    if (zmin is not None) and (zmax is not None):
+        ax.set_zlim(zmin, zmax)
+
     ax.set_zlabel(z_label)
     ax.set_title(title)
     ax.view_init(elev=15, azim=70)
@@ -630,29 +591,31 @@ def plot_all_three_3d_surfaces(gt_array, pred_array, diff_array,
     pr_s   = subsample(pred_array, step)
     diff_s = subsample(diff_array, step)
 
+    vmin_gp, vmax_gp = shared_vmin_vmax(gt_s, pr_s, pct_low=1, pct_high=99, symmetric=False)
+    zmin_gp, zmax_gp = vmin_gp, vmax_gp
+
     fig = plt.figure(figsize=(24, 8))
     fig.suptitle(plot_title, fontsize=16)
 
     ax1 = fig.add_subplot(1, 3, 1, projection='3d')
-    s1 = plot_single_3d_surface(ax1, gt_s,  "Ground Truth",
+    s1 = plot_single_3d_surface(ax1, gt_s, "Ground Truth",
                                 cmap='terrain', z_label='LiDAR Residual (m)',
-                                vmin=-0.1, vmax=1.1)
+                                vmin=vmin_gp, vmax=vmax_gp, zmin=zmin_gp, zmax=zmax_gp)
     fig.colorbar(s1, ax=ax1, shrink=0.5, aspect=10, label='m')
     ax1.set_ylabel('Pixel Y (1m)')
     ax1.set_xlabel('Pixel X (1m)')
 
     ax2 = fig.add_subplot(1, 3, 2, projection='3d')
-    s2 = plot_single_3d_surface(ax2, pr_s,  "Predicted",
+    s2 = plot_single_3d_surface(ax2, pr_s, "Predicted",
                                 cmap='terrain', z_label='LiDAR Residual (m)',
-                                vmin=-0.1, vmax=1.1)
+                                vmin=vmin_gp, vmax=vmax_gp, zmin=zmin_gp, zmax=zmax_gp)
     fig.colorbar(s2, ax=ax2, shrink=0.5, aspect=10, label='m')
     ax2.set_ylabel('Pixel Y (1m)')
     ax2.set_xlabel('Pixel X (1m)')
 
     ax3 = fig.add_subplot(1, 3, 3, projection='3d')
     s3 = plot_single_3d_surface(ax3, diff_s, "Error (Pred - GT)",
-                                cmap='RdBu', z_label='Difference (m)',
-                                vmin=-0.15, vmax=0.15)
+                                cmap='RdBu', z_label='Difference (m)')
     fig.colorbar(s3, ax=ax3, shrink=0.5, aspect=10, label='m')
     ax3.set_ylabel('Pixel Y (1m)')
     ax3.set_xlabel('Pixel X (1m)')
@@ -664,7 +627,6 @@ def plot_all_three_3d_surfaces(gt_array, pred_array, diff_array,
         print(f"Saved 3D plots to {out_path}")
     plt.close(fig)
 
-# === PIPELINE =================================================================
 @torch.no_grad()
 def run_predictions_and_mosaics(ckpt_path, config_yaml, out_dir,
                                 sampler_name="ddpm", batch_size=8, num_workers=4, device="cuda",
@@ -672,10 +634,8 @@ def run_predictions_and_mosaics(ckpt_path, config_yaml, out_dir,
     os.makedirs(out_dir, exist_ok=True)
     device = torch.device(device if torch.cuda.is_available() else "cpu")
 
-    # Load checkpoint and config
     state, cfg_from_ckpt, _ = load_checkpoint(ckpt_path, device)
 
-    # Accept dict overrides, YAML path, or fall back to ckpt config
     if isinstance(config_yaml, dict):
         cfg = config_yaml
         print("Loaded config from provided dict overrides.")
@@ -730,7 +690,6 @@ def run_predictions_and_mosaics(ckpt_path, config_yaml, out_dir,
     )
     print(f"Using {len(subset_pids)} patch(es).")
 
-    # Build dataset/loader
     dataset = LidarS2Dataset(
         lidar_dirs=lidar_dir if "lidar_dir" in cfg["data"] else cfg["data"].get("lidar_dirs", lidar_dir),
         s2_dirs=s2_dir if "s2_dir" in cfg["data"] else cfg["data"].get("s2_dirs", s2_dir),
@@ -743,7 +702,6 @@ def run_predictions_and_mosaics(ckpt_path, config_yaml, out_dir,
     )
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
-    # Choose sampler
     samplers = {
         "ddpm": lambda m, s, c, a, d: p_sample_loop_ddpm(m, scheduler, s, c, a, d),
         "ddim": lambda m, s, c, a, d: p_sample_loop_ddim(m, scheduler, s, c, a, d),
@@ -771,9 +729,8 @@ def run_predictions_and_mosaics(ckpt_path, config_yaml, out_dir,
 
         pred = sampler(model, lidar.shape, s2, attrs, device).float()
 
-        # Add mean back 
         pm = batch.get("lidar_patch_mean", None)
-        pm = pm.to(device).view(-1, 1, 1, 1)  # [B,1,1,1]
+        pm = pm.to(device).view(-1, 1, 1, 1)
         pred = pred + pm
 
         pred = pred.cpu().numpy()
@@ -795,34 +752,50 @@ def run_predictions_and_mosaics(ckpt_path, config_yaml, out_dir,
 
     pred_mosaic_path = os.path.join(out_dir, "pred_mosaic.tif")
     print("Mosaicking predictions →", pred_mosaic_path)
-    mosaic_average_safe(pred_tifs, pred_mosaic_path, compress="deflate")
+    build_averaged_mosaic(pred_tifs, pred_mosaic_path, compress="deflate")
 
     gt_mosaic_path = os.path.join(out_dir, "gt_mosaic.tif")
     print("Mosaicking ground truth →", gt_mosaic_path)
-    mosaic_average_safe(sorted(list(set(gt_tifs))), gt_mosaic_path, compress="deflate")
+    build_averaged_mosaic(sorted(list(set(gt_tifs))), gt_mosaic_path, compress="deflate")
 
     return pred_mosaic_path, gt_mosaic_path, cfg
 
 def align_and_save_diff(pred_mosaic_path, gt_mosaic_path, out_dir):
     with rasterio.open(gt_mosaic_path) as g, rasterio.open(pred_mosaic_path) as p:
-        gt_array = g.read(1).astype(np.float32)
-        pred_array = p.read(1).astype(np.float32)
+        gt_array = g.read(1, masked=True).astype(np.float32).filled(np.nan)
+        pred_array = p.read(1, masked=True).astype(np.float32).filled(np.nan)
+
+        gt_array = np.where(gt_array == NODATA, np.nan, gt_array)
+        pred_array = np.where(pred_array == NODATA, np.nan, pred_array)
+
+        gt_array = _apply_gt_cleanup(gt_array)
+        pred_array = _apply_pred_cleanup(pred_array)
+
         if (gt_array.shape != pred_array.shape) or (g.transform != p.transform):
-            print("Aligning prediction mosaic to ground truth grid...")
-            pred_aligned = np.zeros_like(gt_array, dtype=np.float32)
+            pred_aligned = np.full_like(gt_array, NODATA, dtype=np.float32)
             reproject(
-                source=pred_array, destination=pred_aligned,
+                source=np.where(np.isnan(pred_array), NODATA, pred_array).astype(np.float32),
+                destination=pred_aligned,
                 src_transform=p.transform, src_crs=p.crs,
                 dst_transform=g.transform, dst_crs=g.crs,
-                resampling=Resampling.bilinear
+                resampling=Resampling.bilinear,
+                src_nodata=p.nodata if p.nodata is not None else NODATA,
+                dst_nodata=NODATA,
             )
-            pred_array = pred_aligned
+            pred_array = np.where(pred_aligned == NODATA, np.nan, pred_aligned).astype(np.float32)
+            pred_array = _apply_pred_cleanup(pred_array)
+
         diff_array = pred_array - gt_array
         diff_path = os.path.join(out_dir, "diff_pred_minus_gt.tif")
+
+        diff_to_write = np.where(np.isfinite(diff_array), diff_array, NODATA).astype(np.float32)
+
         prof = g.profile.copy()
-        prof.update(dtype="float32", count=1, compress="deflate")
+        prof.update(dtype="float32", count=1, compress="deflate", nodata=float(NODATA))
+
         with rasterio.open(diff_path, "w", **prof) as dst:
-            dst.write(diff_array.astype(np.float32), 1)
+            dst.write(diff_to_write, 1)
+
         print("Wrote diff raster →", diff_path)
     return gt_array, pred_array, diff_array, diff_path
 
