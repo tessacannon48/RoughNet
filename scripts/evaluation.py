@@ -1,10 +1,7 @@
-# evaluation.py
-
 import os, sys, json, glob, time, argparse, csv
 from math import ceil
 import numpy as np
 import torch
-import torch.nn.functional as Ft
 from torch.utils.data import DataLoader
 import rasterio
 from rasterio.merge import merge as rio_merge
@@ -13,11 +10,9 @@ from rasterio.warp import reproject
 from tqdm import tqdm
 import yaml
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 import matplotlib.colors as mcolors
 import warnings
 import matplotlib.ticker as ticker
-import argparse
 from rasterio.shutil import delete as rio_delete
 from scipy.ndimage import gaussian_filter1d
 
@@ -29,7 +24,6 @@ from src.data.dataset import LidarS2Dataset
 from src.model.unet import ConditionalUNet
 from src.diffusion.scheduler import LinearDiffusionScheduler, CosineDiffusionScheduler
 from src.diffusion.sampling import p_sample_loop_ddpm, p_sample_loop_ddim, p_sample_loop_plms
-from src.utils.metrics import normalize_batch
 from src.utils.recon_metrics import (
     rmse as rmse_recon,
     bias as bias_recon,
@@ -43,6 +37,7 @@ from src.utils.recon_metrics import (
 warnings.filterwarnings("ignore")
 
 NODATA = -9999.0
+
 
 def get_region_preset(region_name: str):
     key = region_name.strip().lower()
@@ -75,13 +70,13 @@ def get_region_preset(region_name: str):
         "pretty_name": pretty_name,
         "zone_ids": zone_ids,
         "ckpt_path": ckpt_path,
-        "s2_dir":    f"{root}/input_data/s2_patches_{key}",
+        "s2_dir": f"{root}/input_data/s2_patches_{key}",
         "lidar_dir": f"{root}/input_data/lidar_patches_{key}",
-        "out_dir":   f"{root}/figures/{out_prefix}_{key}",
+        "out_dir": f"{root}/figures/{out_prefix}_{key}",
     }
 
+
 def load_checkpoint(ckpt_path, device):
-    assert isinstance(ckpt_path, (str, bytes, os.PathLike))
     ckpt_path = str(ckpt_path)
     if not os.path.exists(ckpt_path):
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
@@ -90,12 +85,14 @@ def load_checkpoint(ckpt_path, device):
     state = ckpt["model_state_dict"]
     return state, cfg, ckpt
 
+
 def list_all_patch_ids(s2_dir):
     return sorted([
         os.path.basename(p).split('_')[-1]
         for p in glob.glob(os.path.join(s2_dir, "s2_patch_*"))
         if os.path.isdir(p)
     ])
+
 
 def get_patch_ids_subset(s2_dir, zone_ids=None, max_tiles=None, seed=42, deterministic_order=True):
     pids = list_all_patch_ids(s2_dir)
@@ -120,12 +117,14 @@ def get_patch_ids_subset(s2_dir, zone_ids=None, max_tiles=None, seed=42, determi
             pids = list(rng.choice(pids, size=max_tiles, replace=False))
     return pids
 
+
 def find_lidar_patch(lidar_dir, tile_id):
     cands = glob.glob(os.path.join(lidar_dir, f"*{tile_id}*.tif"))
     if not cands:
         raise FileNotFoundError(f"No LiDAR patch found for tile_id={tile_id} in {lidar_dir}")
     ones = [c for c in cands if "1m" in os.path.basename(c)]
     return (ones[0] if ones else cands[0])
+
 
 def write_tif_like(ref_tif, out_path, array_2d_float32):
     with rasterio.open(ref_tif) as ref:
@@ -150,6 +149,38 @@ def write_tif_like(ref_tif, out_path, array_2d_float32):
     with rasterio.open(out_path, "w", **prof) as dst:
         dst.write(arr, 1)
 
+
+def write_gt_singleband_from_patch(gt_patch_path, out_path):
+    with rasterio.open(gt_patch_path) as src:
+        arr = src.read().astype(np.float32)
+        data = arr[0]
+        if src.count >= 2:
+            mask = arr[1] > 0.5
+        else:
+            mask = np.isfinite(data)
+
+        data = np.where(mask & np.isfinite(data), data, NODATA).astype(np.float32)
+        prof = src.profile.copy()
+        prof.update(
+            dtype="float32",
+            count=1,
+            nodata=float(NODATA),
+            compress="deflate",
+            predictor=3,
+            tiled=False,
+        )
+
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    if os.path.exists(out_path):
+        try:
+            rio_delete(out_path)
+        except Exception:
+            os.remove(out_path)
+
+    with rasterio.open(out_path, "w", **prof) as dst:
+        dst.write(data, 1)
+    return out_path
+
 def build_averaged_mosaic(tif_list, out_path, compress=None, nodata=NODATA):
     assert len(tif_list) > 0
     srcs = [rasterio.open(fp) for fp in tif_list]
@@ -162,10 +193,10 @@ def build_averaged_mosaic(tif_list, out_path, compress=None, nodata=NODATA):
         prof = {
             "driver": "GTiff",
             "height": int(arr.shape[0]),
-            "width":  int(arr.shape[1]),
-            "count":  1,
-            "dtype":  "float32",
-            "crs":    ref.crs,
+            "width": int(arr.shape[1]),
+            "count": 1,
+            "dtype": "float32",
+            "crs": ref.crs,
             "transform": transform,
             "tiled": False,
             "nodata": float(nodata),
@@ -186,12 +217,13 @@ def build_averaged_mosaic(tif_list, out_path, compress=None, nodata=NODATA):
             s.close()
     return out_path
 
+
 def _apply_gt_cleanup(a):
     a = a.astype(np.float32)
     a = np.where(a == NODATA, np.nan, a)
-    a = np.where(a == 0.0, np.nan, a)
     a = np.where(np.isfinite(a), a, np.nan)
     return a
+
 
 def _apply_pred_cleanup(a):
     a = a.astype(np.float32)
@@ -199,41 +231,45 @@ def _apply_pred_cleanup(a):
     a = np.where(np.isfinite(a), a, np.nan)
     return a
 
+
 def plot_2d_maps(gt_array, pred_array, diff_array, out_path):
-    gt_array  = gt_array.astype(np.float32)
-    pred_array= pred_array.astype(np.float32)
-    diff_array= diff_array.astype(np.float32)
+    gt_array = gt_array.astype(np.float32)
+    pred_array = pred_array.astype(np.float32)
+    diff_array = diff_array.astype(np.float32)
 
     stack = np.stack([gt_array, pred_array], axis=0)
     vmin = float(np.nanpercentile(stack, 0.02))
     vmax = float(np.nanpercentile(stack, 99.98))
 
     d = diff_array[np.isfinite(diff_array)]
-    A = np.percentile(np.abs(d), 99)
+    A = np.percentile(np.abs(d), 99) if d.size else 1.0
     A = float(max(A, 1e-6))
 
     fig, axes = plt.subplots(3, 1, figsize=(7, 5))
 
-    im0 = axes[0].imshow(gt_array, cmap='terrain', vmin=vmin, vmax=vmax)
-    axes[0].set_title("Ground Truth"); axes[0].axis('off')
+    im0 = axes[0].imshow(gt_array, cmap="terrain", vmin=vmin, vmax=vmax)
+    axes[0].set_title("Ground Truth")
+    axes[0].axis("off")
 
-    im1 = axes[1].imshow(pred_array, cmap='terrain', vmin=vmin, vmax=vmax)
-    axes[1].set_title("Prediction"); axes[1].axis('off')
+    im1 = axes[1].imshow(pred_array, cmap="terrain", vmin=vmin, vmax=vmax)
+    axes[1].set_title("Prediction")
+    axes[1].axis("off")
 
     im2 = axes[2].imshow(diff_array, cmap="seismic", vmin=-A, vmax=+A)
-    axes[2].set_title("Error (Pred - GT)"); axes[2].axis('off')
+    axes[2].set_title("Error (Pred - GT)")
+    axes[2].axis("off")
 
     cbar_ax = fig.add_axes([0.05, 0.7, 0.92, 0.02])
     cbar0 = fig.colorbar(im0, cax=cbar_ax, orientation="horizontal")
     cbar0.set_label("m")
-    cbar0.ax.xaxis.set_ticks_position('bottom')
-    cbar0.ax.xaxis.set_label_position('bottom')
+    cbar0.ax.xaxis.set_ticks_position("bottom")
+    cbar0.ax.xaxis.set_label_position("bottom")
 
     cbar_ax = fig.add_axes([0.05, 0.41, 0.92, 0.02])
     cbar1 = fig.colorbar(im1, cax=cbar_ax, orientation="horizontal", shrink=0.1)
     cbar1.set_label("m")
-    cbar1.ax.xaxis.set_ticks_position('bottom')
-    cbar1.ax.xaxis.set_label_position('bottom')
+    cbar1.ax.xaxis.set_ticks_position("bottom")
+    cbar1.ax.xaxis.set_label_position("bottom")
 
     formatter = ticker.ScalarFormatter(useOffset=False, useMathText=False)
     formatter.set_scientific(False)
@@ -241,46 +277,48 @@ def plot_2d_maps(gt_array, pred_array, diff_array, out_path):
     cbar_ax = fig.add_axes([0.05, 0.12, 0.92, 0.02])
     cbar2 = fig.colorbar(im2, cax=cbar_ax, orientation="horizontal", format=formatter)
     cbar2.set_label("m")
-    cbar2.ax.xaxis.set_ticks_position('bottom')
-    cbar2.ax.xaxis.set_label_position('bottom')
+    cbar2.ax.xaxis.set_ticks_position("bottom")
+    cbar2.ax.xaxis.set_label_position("bottom")
 
     plt.tight_layout()
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    fig.savefig(out_path, dpi=300, bbox_inches='tight')
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved 2D composite to {out_path}")
+
 
 def _metric_params_from_cfg(cfg):
     px = float(cfg.get("data", {}).get("pixel_size_m", 1.0))
     jsd_scales = tuple(cfg.get("evaluation", {}).get("jsd_scales_m", [1.0, 2.0, 5.0, 10.0]))
-    jsd_bins   = int(cfg.get("evaluation", {}).get("jsd_bins", 256))
-    use_sobel  = bool(cfg.get("evaluation", {}).get("nae_use_sobel", True))
-    deg        = bool(cfg.get("evaluation", {}).get("nae_degrees", True))
+    jsd_bins = int(cfg.get("evaluation", {}).get("jsd_bins", 256))
+    use_sobel = bool(cfg.get("evaluation", {}).get("nae_use_sobel", True))
+    deg = bool(cfg.get("evaluation", {}).get("nae_degrees", True))
     use_window = bool(cfg.get("evaluation", {}).get("psd_window", True))
     return px, jsd_scales, jsd_bins, use_sobel, deg, use_window
 
+
 def _compute_metrics_tensor(gt_t, pr_t, mask_t, px, jsd_scales, jsd_bins, use_sobel, deg, use_window):
-    full_mask = mask_t
-    min_valid_depth = 0.01
-    gt_above_thresh = gt_t > min_valid_depth
-    valid_mask = full_mask & gt_above_thresh
-    abs_rel = torch.abs(gt_t - pr_t) / (gt_t + 1e-6)
-    abs_rel = abs_rel[valid_mask]
-    abs_rel_error = float(abs_rel.mean().item()) if abs_rel.numel() > 0 else -9999.0
+    full_mask = mask_t & torch.isfinite(gt_t) & torch.isfinite(pr_t)
+
+    diff = gt_t - pr_t
+    denom = torch.abs(gt_t).clamp_min(1e-6)
+    abs_rel = (torch.abs(diff) / denom)[full_mask]
+    abs_rel_error = float(abs_rel.mean().item()) if abs_rel.numel() > 0 else float("nan")
 
     return {
-        "rmse_phys_m": float(rmse_recon(gt_t, pr_t, mask=mask_t).item()),
-        "bias_phys_m": float(bias_recon(gt_t, pr_t, mask=mask_t).item()),
-        "sigma_error_pct": float(sigma_error(gt_t, pr_t, mask=mask_t).item()),
-        "corr_length_error_pct": float(corr_length_error(gt_t, pr_t, mask=mask_t, pixel_size=px).item()),
-        "normal_angle_error_deg": float(normal_angle_error(gt_t, pr_t, mask=mask_t, pixel_size=px, use_sobel=use_sobel, degrees=deg).item()),
-        "jsd": float(average_jsd_multiscale(gt_t, pr_t, scales_m=jsd_scales, pixel_size=px, bins=jsd_bins, mask=mask_t).item()),
-        "psd_rmse": float(log_psd_rmse(gt_t, pr_t, pixel_size=px, mask=mask_t, window=use_window).item()),
+        "rmse_phys_m": float(rmse_recon(gt_t, pr_t, mask=full_mask).item()),
+        "bias_phys_m": float(bias_recon(gt_t, pr_t, mask=full_mask).item()),
+        "sigma_error_pct": float(sigma_error(gt_t, pr_t, mask=full_mask).item()),
+        "corr_length_error_pct": float(corr_length_error(gt_t, pr_t, mask=full_mask, pixel_size=px).item()),
+        "normal_angle_error_deg": float(normal_angle_error(gt_t, pr_t, mask=full_mask, pixel_size=px, use_sobel=use_sobel, degrees=deg).item()),
+        "jsd": float(average_jsd_multiscale(gt_t, pr_t, scales_m=jsd_scales, pixel_size=px, bins=jsd_bins, mask=full_mask).item()),
+        "psd_rmse": float(log_psd_rmse(gt_t, pr_t, pixel_size=px, mask=full_mask, window=use_window).item()),
         "abs_rel_error": abs_rel_error,
     }
 
 def _valid_mask_from_arrays(gt_array, pred_array):
     return np.isfinite(gt_array) & np.isfinite(pred_array)
+
 
 def compute_and_save_region_metrics(gt_array, pred_array, out_dir, cfg):
     stats_dir = os.path.join(out_dir, "reconstruction_statistics")
@@ -291,7 +329,7 @@ def compute_and_save_region_metrics(gt_array, pred_array, out_dir, cfg):
         raise ValueError("No valid pixels found for region metrics.")
     gt_t = torch.from_numpy(gt_array).float()
     pr_t = torch.from_numpy(pred_array).float()
-    m_t  = torch.from_numpy(mask_np).bool()
+    m_t = torch.from_numpy(mask_np).bool()
 
     px, jsd_scales, jsd_bins, use_sobel, deg, use_window = _metric_params_from_cfg(cfg)
     metrics = _compute_metrics_tensor(gt_t, pr_t, m_t, px, jsd_scales, jsd_bins, use_sobel, deg, use_window)
@@ -324,6 +362,7 @@ def compute_and_save_region_metrics(gt_array, pred_array, out_dir, cfg):
         json.dump(region_stats, f, indent=4)
     print(f"Saved region reconstruction stats → {out_json}")
 
+
 def compute_and_save_patch_metrics(out_dir, cfg):
     stats_dir = os.path.join(out_dir, "reconstruction_statistics")
     os.makedirs(stats_dir, exist_ok=True)
@@ -350,14 +389,17 @@ def compute_and_save_patch_metrics(out_dir, cfg):
         gt_fp = find_lidar_patch(lidar_dir, tile_id)
 
         with rasterio.open(gt_fp) as g, rasterio.open(pred_fp) as p:
-            gt = g.read(1, masked=True).astype(np.float32)
-            pr = p.read(1, masked=True).astype(np.float32)
+            g_arr = g.read().astype(np.float32)
+            gt = g_arr[0]
+            if g.count >= 2:
+                gmask = g_arr[1] > 0.5
+            else:
+                gmask = np.isfinite(gt)
 
-            gt = gt.filled(np.nan)
-            pr = pr.filled(np.nan)
+            gt = np.where(gmask & np.isfinite(gt), gt, np.nan).astype(np.float32)
 
-            gt = np.where(gt == NODATA, np.nan, gt)
-            pr = np.where(pr == NODATA, np.nan, pr)
+            pr = p.read(1, masked=True).astype(np.float32).filled(np.nan)
+            pr = np.where(pr == NODATA, np.nan, pr).astype(np.float32)
 
             gt = _apply_gt_cleanup(gt)
             pr = _apply_pred_cleanup(pr)
@@ -379,17 +421,19 @@ def compute_and_save_patch_metrics(out_dir, cfg):
         mask_np = _valid_mask_from_arrays(gt, pr)
         if not np.any(mask_np):
             row = {"tile_id": tile_id, "valid_pixel_count": 0}
-            for k in ["rmse_phys_m","bias_phys_m","sigma_error_pct","corr_length_error_pct",
-                      "normal_angle_error_deg","jsd","psd_rmse",
-                      "gt_mean_val","gt_std_val","pred_mean_val","pred_std_val","abs_rel_error",
-                      "gt_min_val","gt_max_val","pred_min_val","pred_max_val"]:
+            for k in [
+                "rmse_phys_m", "bias_phys_m", "sigma_error_pct", "corr_length_error_pct",
+                "normal_angle_error_deg", "jsd", "psd_rmse",
+                "gt_mean_val", "gt_std_val", "pred_mean_val", "pred_std_val", "abs_rel_error",
+                "gt_min_val", "gt_max_val", "pred_min_val", "pred_max_val"
+            ]:
                 row[k] = float("nan")
             rows.append(row)
             continue
 
         gt_t = torch.from_numpy(gt).float()
         pr_t = torch.from_numpy(pr).float()
-        m_t  = torch.from_numpy(mask_np).bool()
+        m_t = torch.from_numpy(mask_np).bool()
 
         metrics = _compute_metrics_tensor(gt_t, pr_t, m_t, px, jsd_scales, jsd_bins, use_sobel, deg, use_window)
 
@@ -416,7 +460,7 @@ def compute_and_save_patch_metrics(out_dir, cfg):
         "tile_id", "valid_pixel_count",
         "rmse_phys_m", "bias_phys_m",
         "sigma_error_pct", "corr_length_error_pct",
-        "normal_angle_error_deg", "jsd", "psd_rmse","abs_rel_error",
+        "normal_angle_error_deg", "jsd", "psd_rmse", "abs_rel_error",
         "gt_mean_val", "gt_std_val", "pred_mean_val", "pred_std_val",
         "gt_min_val", "gt_max_val", "pred_min_val", "pred_max_val",
     ]
@@ -440,8 +484,8 @@ def compute_and_save_patch_metrics(out_dir, cfg):
         return float(np.average(v[m], weights=w[m]))
 
     weights = [r["valid_pixel_count"] for r in rows]
-    metrics_keys = ["rmse_phys_m","bias_phys_m","sigma_error_pct","corr_length_error_pct",
-                    "normal_angle_error_deg","jsd","psd_rmse","abs_rel_error"]
+    metrics_keys = ["rmse_phys_m", "bias_phys_m", "sigma_error_pct", "corr_length_error_pct",
+                    "normal_angle_error_deg", "jsd", "psd_rmse", "abs_rel_error"]
 
     macro_avgs = {k: _nanmean([r[k] for r in rows]) for k in metrics_keys}
     weighted_avgs = {k: _weighted_mean([r[k] for r in rows], weights) for k in metrics_keys}
@@ -455,6 +499,7 @@ def compute_and_save_patch_metrics(out_dir, cfg):
     with open(os.path.join(stats_dir, "patch_reconstruction_summary.json"), "w") as f:
         json.dump(summary_json, f, indent=4)
     print("Saved per-patch summary JSON →", os.path.join(stats_dir, "patch_reconstruction_summary.json"))
+
 
 def plot_region_pdfs(gt_array, pred_array, out_path,
                      bins=256, low_pct=0.5, high_pct=99.5,
@@ -486,7 +531,8 @@ def plot_region_pdfs(gt_array, pred_array, out_path,
     eps = 1e-12
     p = gt_hist * bin_width
     q = pr_hist * bin_width
-    p_sum = p.sum(); q_sum = q.sum()
+    p_sum = p.sum()
+    q_sum = q.sum()
     if p_sum <= 0 or q_sum <= 0:
         jsd = float("nan")
     else:
@@ -540,8 +586,10 @@ def plot_region_pdfs(gt_array, pred_array, out_path,
     with open(out_path.replace(".png", "_meta.json"), "w") as f:
         json.dump(meta, f, indent=2)
 
+
 def subsample(arr, step):
     return arr[::step, ::step]
+
 
 def shared_vmin_vmax(gt, pr, pct_low=1, pct_high=99, symmetric=False):
     v = np.concatenate([gt[np.isfinite(gt)], pr[np.isfinite(pr)]])
@@ -558,8 +606,9 @@ def shared_vmin_vmax(gt, pr, pct_low=1, pct_high=99, symmetric=False):
         vmax = float(np.nanmax(v))
     return (vmin, vmax)
 
+
 def plot_single_3d_surface(ax, lidar_array, title="3D",
-                           cmap='terrain', z_label='LiDAR Residual (m)',
+                           cmap="terrain", z_label="LiDAR Residual (m)",
                            vmin=None, vmax=None, zmin=None, zmax=None):
     Z = lidar_array.astype(np.float32)
     mask = np.isfinite(Z)
@@ -570,7 +619,7 @@ def plot_single_3d_surface(ax, lidar_array, title="3D",
 
     surf = ax.plot_surface(
         X, Y, Zm,
-        cmap=cmap, alpha=0.9, edgecolor='none',
+        cmap=cmap, alpha=0.9, edgecolor="none",
         rstride=1, cstride=1, vmin=vmin, vmax=vmax
     )
 
@@ -585,10 +634,11 @@ def plot_single_3d_surface(ax, lidar_array, title="3D",
     ax.view_init(elev=15, azim=70)
     return surf
 
+
 def plot_all_three_3d_surfaces(gt_array, pred_array, diff_array,
                                step=4, out_path=None, plot_title="Combined 3D Plots"):
-    gt_s   = subsample(gt_array, step)
-    pr_s   = subsample(pred_array, step)
+    gt_s = subsample(gt_array, step)
+    pr_s = subsample(pred_array, step)
     diff_s = subsample(diff_array, step)
 
     vmin_gp, vmax_gp = shared_vmin_vmax(gt_s, pr_s, pct_low=1, pct_high=99, symmetric=False)
@@ -597,35 +647,36 @@ def plot_all_three_3d_surfaces(gt_array, pred_array, diff_array,
     fig = plt.figure(figsize=(24, 8))
     fig.suptitle(plot_title, fontsize=16)
 
-    ax1 = fig.add_subplot(1, 3, 1, projection='3d')
+    ax1 = fig.add_subplot(1, 3, 1, projection="3d")
     s1 = plot_single_3d_surface(ax1, gt_s, "Ground Truth",
-                                cmap='terrain', z_label='LiDAR Residual (m)',
+                                cmap="terrain", z_label="LiDAR Residual (m)",
                                 vmin=vmin_gp, vmax=vmax_gp, zmin=zmin_gp, zmax=zmax_gp)
-    fig.colorbar(s1, ax=ax1, shrink=0.5, aspect=10, label='m')
-    ax1.set_ylabel('Pixel Y (1m)')
-    ax1.set_xlabel('Pixel X (1m)')
+    fig.colorbar(s1, ax=ax1, shrink=0.5, aspect=10, label="m")
+    ax1.set_ylabel("Pixel Y (1m)")
+    ax1.set_xlabel("Pixel X (1m)")
 
-    ax2 = fig.add_subplot(1, 3, 2, projection='3d')
+    ax2 = fig.add_subplot(1, 3, 2, projection="3d")
     s2 = plot_single_3d_surface(ax2, pr_s, "Predicted",
-                                cmap='terrain', z_label='LiDAR Residual (m)',
+                                cmap="terrain", z_label="LiDAR Residual (m)",
                                 vmin=vmin_gp, vmax=vmax_gp, zmin=zmin_gp, zmax=zmax_gp)
-    fig.colorbar(s2, ax=ax2, shrink=0.5, aspect=10, label='m')
-    ax2.set_ylabel('Pixel Y (1m)')
-    ax2.set_xlabel('Pixel X (1m)')
+    fig.colorbar(s2, ax=ax2, shrink=0.5, aspect=10, label="m")
+    ax2.set_ylabel("Pixel Y (1m)")
+    ax2.set_xlabel("Pixel X (1m)")
 
-    ax3 = fig.add_subplot(1, 3, 3, projection='3d')
+    ax3 = fig.add_subplot(1, 3, 3, projection="3d")
     s3 = plot_single_3d_surface(ax3, diff_s, "Error (Pred - GT)",
-                                cmap='RdBu', z_label='Difference (m)')
-    fig.colorbar(s3, ax=ax3, shrink=0.5, aspect=10, label='m')
-    ax3.set_ylabel('Pixel Y (1m)')
-    ax3.set_xlabel('Pixel X (1m)')
+                                cmap="RdBu", z_label="Difference (m)")
+    fig.colorbar(s3, ax=ax3, shrink=0.5, aspect=10, label="m")
+    ax3.set_ylabel("Pixel Y (1m)")
+    ax3.set_xlabel("Pixel X (1m)")
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     if out_path:
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        plt.savefig(out_path, bbox_inches='tight', dpi=300)
+        plt.savefig(out_path, bbox_inches="tight", dpi=300)
         print(f"Saved 3D plots to {out_path}")
     plt.close(fig)
+
 
 @torch.no_grad()
 def run_predictions_and_mosaics(ckpt_path, config_yaml, out_dir,
@@ -647,14 +698,14 @@ def run_predictions_and_mosaics(ckpt_path, config_yaml, out_dir,
         cfg = cfg_from_ckpt
         print("Loaded config from checkpoint.")
 
-    s2_dir        = cfg["data"]["s2_dir"]
-    lidar_dir     = cfg["data"]["lidar_dir"]
-    context_k     = cfg["training"]["context_k"]
-    noise_sched   = cfg["training"]["noise_schedule"]
-    timesteps     = cfg["training"]["timesteps"]
+    s2_dir = cfg["data"]["s2_dir"]
+    lidar_dir = cfg["data"]["lidar_dir"]
+    context_k = cfg["training"]["context_k"]
+    noise_sched = cfg["training"]["noise_schedule"]
+    timesteps = cfg["training"]["timesteps"]
     base_channels = cfg["model"]["base_channels"]
-    embed_dim     = cfg["model"]["embed_dim"]
-    unet_depth    = cfg["model"]["unet_depth"]
+    embed_dim = cfg["model"]["embed_dim"]
+    unet_depth = cfg["model"]["unet_depth"]
     attention_variant = cfg["model"]["attention_variant"]
 
     print("\n=== Inference Config ===")
@@ -694,7 +745,7 @@ def run_predictions_and_mosaics(ckpt_path, config_yaml, out_dir,
         lidar_dirs=lidar_dir if "lidar_dir" in cfg["data"] else cfg["data"].get("lidar_dirs", lidar_dir),
         s2_dirs=s2_dir if "s2_dir" in cfg["data"] else cfg["data"].get("s2_dirs", s2_dir),
         context_k=context_k,
-        randomize_context=True,
+        randomize_context=False,
         augment=False,
         debug=False,
         split_pids=subset_pids,
@@ -712,9 +763,12 @@ def run_predictions_and_mosaics(ckpt_path, config_yaml, out_dir,
     sampler = samplers[sampler_name]
 
     pred_tiles_dir = os.path.join(out_dir, "pred_tiles")
+    gt_tiles_dir = os.path.join(out_dir, "gt_tiles")
     os.makedirs(pred_tiles_dir, exist_ok=True)
+    os.makedirs(gt_tiles_dir, exist_ok=True)
 
-    pred_tifs, gt_tifs = [], []
+    pred_tifs = []
+    gt_tifs = []
     start = time.perf_counter()
 
     processed = 0
@@ -722,9 +776,9 @@ def run_predictions_and_mosaics(ckpt_path, config_yaml, out_dir,
         if (max_tiles is not None) and (processed >= max_tiles):
             break
 
-        s2     = batch["s2"].to(device)
-        attrs  = batch["attrs"].to(device)
-        lidar  = batch["lidar"].to(device)
+        s2 = batch["s2"].to(device)
+        attrs = batch["attrs"].to(device)
+        lidar = batch["lidar"].to(device)
         tile_ids_batch = batch["tile_id"]
 
         pred = sampler(model, lidar.shape, s2, attrs, device).float()
@@ -741,10 +795,15 @@ def run_predictions_and_mosaics(ckpt_path, config_yaml, out_dir,
                 break
             tile_id = tile_ids_batch[i]
             gt_lidar_tif = find_lidar_patch(lidar_dir, tile_id)
-            out_tif = os.path.join(pred_tiles_dir, f"pred_{tile_id}.tif")
-            write_tif_like(gt_lidar_tif, out_tif, pred[i, 0])
-            pred_tifs.append(out_tif)
-            gt_tifs.append(gt_lidar_tif)
+
+            out_pred_tif = os.path.join(pred_tiles_dir, f"pred_{tile_id}.tif")
+            write_tif_like(gt_lidar_tif, out_pred_tif, pred[i, 0])
+            pred_tifs.append(out_pred_tif)
+
+            out_gt_tif = os.path.join(gt_tiles_dir, f"gt_{tile_id}.tif")
+            write_gt_singleband_from_patch(gt_lidar_tif, out_gt_tif)
+            gt_tifs.append(out_gt_tif)
+
             processed += 1
 
     elapsed = time.perf_counter() - start
@@ -759,6 +818,7 @@ def run_predictions_and_mosaics(ckpt_path, config_yaml, out_dir,
     build_averaged_mosaic(sorted(list(set(gt_tifs))), gt_mosaic_path, compress="deflate")
 
     return pred_mosaic_path, gt_mosaic_path, cfg
+
 
 def align_and_save_diff(pred_mosaic_path, gt_mosaic_path, out_dir):
     with rasterio.open(gt_mosaic_path) as g, rasterio.open(pred_mosaic_path) as p:
@@ -799,9 +859,8 @@ def align_and_save_diff(pred_mosaic_path, gt_mosaic_path, out_dir):
         print("Wrote diff raster →", diff_path)
     return gt_array, pred_array, diff_array, diff_path
 
-# === MAIN =====================================================================
-def main():
 
+def main():
     parser = argparse.ArgumentParser(
         description="Evaluate RoughNet on a given region (val or test)."
     )
@@ -864,23 +923,17 @@ def main():
 
     args = parser.parse_args()
 
-    
-    # Resolve region preset (paths + zone_ids + ckpt_path)
-    
     preset = get_region_preset(args.region)
-    region_key      = preset["region_key"]      
-    region_name     = preset["pretty_name"]     
-    zone_ids        = preset["zone_ids"]
-    CKPT_PATH       = preset["ckpt_path"]
-    TEST_S2_DIR     = preset["s2_dir"]
-    TEST_LIDAR_DIR  = preset["lidar_dir"]
-    out_dir         = preset["out_dir"]
+    region_key = preset["region_key"]
+    region_name = preset["pretty_name"]
+    zone_ids = preset["zone_ids"]
+    CKPT_PATH = preset["ckpt_path"]
+    TEST_S2_DIR = preset["s2_dir"]
+    TEST_LIDAR_DIR = preset["lidar_dir"]
+    out_dir = preset["out_dir"]
 
     os.makedirs(out_dir, exist_ok=True)
 
-    
-    # Device + load config from checkpoint once
-    
     device = args.device
     if torch.cuda.is_available():
         device = "cuda"
@@ -891,19 +944,15 @@ def main():
     ckpt_tmp = torch.load(CKPT_PATH, map_location=device)
     config = ckpt_tmp["config"]
 
-    # Override paths for eval data
-    config["data"]["s2_dir"]    = TEST_S2_DIR
+    config["data"]["s2_dir"] = TEST_S2_DIR
     config["data"]["lidar_dir"] = TEST_LIDAR_DIR
     if "logging" in config:
         config["logging"]["output_dir"] = out_dir
     if "system" in config:
         config["system"]["device"] = device
 
-    
-    # Prediction (or reuse existing mosaics)
-    
     pred_mosaic_path = os.path.join(out_dir, "pred_mosaic.tif")
-    gt_mosaic_path   = os.path.join(out_dir, "gt_mosaic.tif")
+    gt_mosaic_path = os.path.join(out_dir, "gt_mosaic.tif")
 
     reuse_ok = (
         args.skip_predict
@@ -932,15 +981,12 @@ def main():
             deterministic_order=args.deterministic_order,
         )
 
-    # Alignment + plots + metrics
-   
     gt_array, pred_array, diff_array, diff_path = align_and_save_diff(
         pred_mosaic_path=pred_mosaic_path,
         gt_mosaic_path=gt_mosaic_path,
         out_dir=out_dir,
     )
 
-    # Region PDF figure 
     pdf_path = os.path.join(out_dir, f"{region_key}_pdfs.png")
     plot_region_pdfs(
         gt_array,
@@ -954,11 +1000,9 @@ def main():
         title=f"Region PDFs: GT vs Prediction ({region_name})",
     )
 
-    # 2D composite
     two_d_path = os.path.join(out_dir, f"{region_key}_mosaic_2d.png")
     plot_2d_maps(gt_array, pred_array, diff_array, two_d_path)
 
-    # 3D composite
     three_d_path = os.path.join(out_dir, f"{region_key}_mosaic_3d.png")
     plot_all_three_3d_surfaces(
         gt_array=gt_array,
@@ -969,10 +1013,7 @@ def main():
         plot_title=f"Predicted 3D Surface for {region_name}",
     )
 
-    # Region-wide metrics
     compute_and_save_region_metrics(gt_array, pred_array, out_dir, cfg_used)
-
-    # Per-patch metrics
     compute_and_save_patch_metrics(out_dir, cfg_used)
 
     print("\nDone.")

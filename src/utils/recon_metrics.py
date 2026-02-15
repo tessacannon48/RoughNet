@@ -449,7 +449,8 @@ def normal_angle_error(
         ang = torch.acos(dot)
         if degrees:
             ang = ang * (180.0 / math.pi)
-        ang = ang[m]
+        valid = m & torch.isfinite(ang)
+        ang = ang[valid]
         if ang.numel() > 0:
             angles.append(ang.mean())
     if len(angles) == 0:

@@ -3,8 +3,8 @@
 
 # Ignore full data folders
 raw_data/
-input_data/lidar_patches_pondinlet/
-input_data/s2_patches_pondinlet/
+input_data/lidar_patches_pondinlet_2024/
+input_data/s2_patches_pondinlet_2024/
 input_data/lidar_patches_tuk/
 input_data/s2_patches_tuk/
 input_data/lidar_patches_cambridge/
@@ -26,6 +26,8 @@ wandb/
 figures/final_test_cambridge/
 figures/final_val_pondinlet/
 figures/final_val_tuk/
+figures/old_final_test_folders/
+figures/test/
 
 # Ignore cache
 __pycache__/
