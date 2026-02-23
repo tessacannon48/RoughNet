@@ -1,3 +1,5 @@
+#evaluation.py 
+
 import os, sys, json, glob, time, argparse, csv
 from math import ceil
 import numpy as np
@@ -48,7 +50,7 @@ def get_region_preset(region_name: str):
         )
 
     root = "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation"
-    ckpt_path = f"{root}/models/og_final_model_k6_att_best.pth"
+    ckpt_path = f"{root}/models/cosine_k6_att_best.pth"
 
     if key == "pondinlet":
         pretty_name = "Pond Inlet"
@@ -72,7 +74,7 @@ def get_region_preset(region_name: str):
         "ckpt_path": ckpt_path,
         "s2_dir": f"{root}/input_data/s2_patches_{key}",
         "lidar_dir": f"{root}/input_data/lidar_patches_{key}",
-        "out_dir": f"{root}/figures/{out_prefix}_{key}",
+        "out_dir": f"{root}/figures/cosine_model/{out_prefix}_{key}",
     }
 
 
@@ -878,6 +880,15 @@ def main():
         help="Sampling method for diffusion.",
     )
     parser.add_argument(
+        "--samplers",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated list of samplers to run (overrides --sampler). "
+            "Example: 'ddpm,ddim,plms'."
+        ),
+    )
+    parser.add_argument(
         "--batch-size",
         type=int,
         default=8,
@@ -930,9 +941,7 @@ def main():
     CKPT_PATH = preset["ckpt_path"]
     TEST_S2_DIR = preset["s2_dir"]
     TEST_LIDAR_DIR = preset["lidar_dir"]
-    out_dir = preset["out_dir"]
-
-    os.makedirs(out_dir, exist_ok=True)
+    base_out_dir = preset["out_dir"]
 
     device = args.device
     if torch.cuda.is_available():
@@ -946,85 +955,99 @@ def main():
 
     config["data"]["s2_dir"] = TEST_S2_DIR
     config["data"]["lidar_dir"] = TEST_LIDAR_DIR
-    if "logging" in config:
-        config["logging"]["output_dir"] = out_dir
     if "system" in config:
         config["system"]["device"] = device
 
-    pred_mosaic_path = os.path.join(out_dir, "pred_mosaic.tif")
-    gt_mosaic_path = os.path.join(out_dir, "gt_mosaic.tif")
-
-    reuse_ok = (
-        args.skip_predict
-        and os.path.exists(pred_mosaic_path)
-        and os.path.exists(gt_mosaic_path)
-    )
-
-    if reuse_ok:
-        print("Skipping prediction (reuse mode). Using existing mosaics:")
-        print(f"  Pred mosaic: {pred_mosaic_path}")
-        print(f"  GT mosaic:   {gt_mosaic_path}")
-        cfg_used = config
+    if args.samplers:
+        samplers = [s.strip().lower() for s in args.samplers.split(",") if s.strip()]
     else:
-        print("Running prediction + mosaicking...")
-        pred_mosaic_path, gt_mosaic_path, cfg_used = run_predictions_and_mosaics(
-            ckpt_path=CKPT_PATH,
-            config_yaml=config,
-            out_dir=out_dir,
-            sampler_name=args.sampler,
-            batch_size=args.batch_size,
-            num_workers=args.num_workers,
-            device=device,
-            zone_ids=zone_ids,
-            max_tiles=args.max_tiles,
-            seed=args.seed,
-            deterministic_order=args.deterministic_order,
+        samplers = [args.sampler]
+
+    invalid = [s for s in samplers if s not in ("ddpm", "ddim", "plms")]
+    if invalid:
+        raise ValueError(f"Unknown sampler(s): {invalid}. Choose from ddpm, ddim, plms.")
+
+    for sampler_name in samplers:
+        out_dir = f"{base_out_dir}_{sampler_name}"
+        os.makedirs(out_dir, exist_ok=True)
+        if "logging" in config:
+            config["logging"]["output_dir"] = out_dir
+
+        pred_mosaic_path = os.path.join(out_dir, "pred_mosaic.tif")
+        gt_mosaic_path = os.path.join(out_dir, "gt_mosaic.tif")
+
+        reuse_ok = (
+            args.skip_predict
+            and os.path.exists(pred_mosaic_path)
+            and os.path.exists(gt_mosaic_path)
         )
 
-    gt_array, pred_array, diff_array, diff_path = align_and_save_diff(
-        pred_mosaic_path=pred_mosaic_path,
-        gt_mosaic_path=gt_mosaic_path,
-        out_dir=out_dir,
-    )
+        if reuse_ok:
+            print("Skipping prediction (reuse mode). Using existing mosaics:")
+            print(f"  Pred mosaic: {pred_mosaic_path}")
+            print(f"  GT mosaic:   {gt_mosaic_path}")
+            cfg_used = config
+        else:
+            print(f"Running prediction + mosaicking (sampler={sampler_name})...")
+            pred_mosaic_path, gt_mosaic_path, cfg_used = run_predictions_and_mosaics(
+                ckpt_path=CKPT_PATH,
+                config_yaml=config,
+                out_dir=out_dir,
+                sampler_name=sampler_name,
+                batch_size=args.batch_size,
+                num_workers=args.num_workers,
+                device=device,
+                zone_ids=zone_ids,
+                max_tiles=args.max_tiles,
+                seed=args.seed,
+                deterministic_order=args.deterministic_order,
+            )
 
-    pdf_path = os.path.join(out_dir, f"{region_key}_pdfs.png")
-    plot_region_pdfs(
-        gt_array,
-        pred_array,
-        pdf_path,
-        bins=256,
-        low_pct=0.01,
-        high_pct=99.99,
-        smooth_sigma=1.5,
-        logy=False,
-        title=f"Region PDFs: GT vs Prediction ({region_name})",
-    )
+        gt_array, pred_array, diff_array, diff_path = align_and_save_diff(
+            pred_mosaic_path=pred_mosaic_path,
+            gt_mosaic_path=gt_mosaic_path,
+            out_dir=out_dir,
+        )
 
-    two_d_path = os.path.join(out_dir, f"{region_key}_mosaic_2d.png")
-    plot_2d_maps(gt_array, pred_array, diff_array, two_d_path)
+        pdf_path = os.path.join(out_dir, f"{region_key}_pdfs.png")
+        plot_region_pdfs(
+            gt_array,
+            pred_array,
+            pdf_path,
+            bins=256,
+            low_pct=0.01,
+            high_pct=99.99,
+            smooth_sigma=1.5,
+            logy=False,
+            title=f"Region PDFs: GT vs Prediction ({region_name})",
+        )
 
-    three_d_path = os.path.join(out_dir, f"{region_key}_mosaic_3d.png")
-    plot_all_three_3d_surfaces(
-        gt_array=gt_array,
-        pred_array=pred_array,
-        diff_array=diff_array,
-        step=20,
-        out_path=three_d_path,
-        plot_title=f"Predicted 3D Surface for {region_name}",
-    )
+        two_d_path = os.path.join(out_dir, f"{region_key}_mosaic_2d.png")
+        plot_2d_maps(gt_array, pred_array, diff_array, two_d_path)
 
-    compute_and_save_region_metrics(gt_array, pred_array, out_dir, cfg_used)
-    compute_and_save_patch_metrics(out_dir, cfg_used)
+        three_d_path = os.path.join(out_dir, f"{region_key}_mosaic_3d.png")
+        plot_all_three_3d_surfaces(
+            gt_array=gt_array,
+            pred_array=pred_array,
+            diff_array=diff_array,
+            step=20,
+            out_path=three_d_path,
+            plot_title=f"Predicted 3D Surface for {region_name}",
+        )
 
-    print("\nDone.")
-    print("Outputs:")
-    print(f"  Region:       {region_name} ({region_key})")
-    print(f"  GT mosaic:    {gt_mosaic_path}")
-    print(f"  Pred mosaic:  {pred_mosaic_path}")
-    print(f"  Diff raster:  {diff_path}")
-    print(f"  Region stats: {os.path.join(out_dir, 'reconstruction_statistics', 'region_reconstruction_stats.json')}")
-    print(f"  Patch CSV:    {os.path.join(out_dir, 'reconstruction_statistics', 'patch_reconstruction_stats.csv')}")
-    print(f"  Patch summary:{os.path.join(out_dir, 'reconstruction_statistics', 'patch_reconstruction_summary.json')}")
+        compute_and_save_region_metrics(gt_array, pred_array, out_dir, cfg_used)
+        compute_and_save_patch_metrics(out_dir, cfg_used)
+
+        print("\nDone.")
+        print("Outputs:")
+        print(f"  Region:       {region_name} ({region_key})")
+        print(f"  Sampler:      {sampler_name}")
+        print(f"  GT mosaic:    {gt_mosaic_path}")
+        print(f"  Pred mosaic:  {pred_mosaic_path}")
+        print(f"  Diff raster:  {diff_path}")
+        print(f"  Region stats: {os.path.join(out_dir, 'reconstruction_statistics', 'region_reconstruction_stats.json')}")
+        print(f"  Patch CSV:    {os.path.join(out_dir, 'reconstruction_statistics', 'patch_reconstruction_stats.csv')}")
+        print(f"  Patch summary:{os.path.join(out_dir, 'reconstruction_statistics', 'patch_reconstruction_summary.json')}")
 
 
 if __name__ == "__main__":

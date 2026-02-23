@@ -141,55 +141,104 @@ def _radial_profile(values: torch.Tensor, radii: torch.Tensor, edges: torch.Tens
     return num / den
 
 
-def _acf2d(x: torch.Tensor) -> torch.Tensor:
+def _acf2d_unbiased_masked(
+    x: torch.Tensor,
+    m: torch.Tensor,
+    pad_factor: int = 2,
+) -> torch.Tensor:
     """
-    Zero-mean autocorrelation via Wiener–Khinchin:
-      acf = ifft2( |fft2(x)|^2 ), normalized so acf[0,0] = variance * Npix
-    Returns real tensor same shape as x.
-    """
-    X = torch.fft.fft2(x)
-    S = (X * torch.conj(X))
-    acf = torch.fft.ifft2(S).real
-    return acf
+    Unbiased masked autocorrelation using FFT:
 
+      C = ifft2( |fft2( (x - mu) * m )|^2 ) / ifft2( |fft2(m)|^2 )
 
-def _find_lengthscale_from_acf(acf: torch.Tensor, pixel_size: float) -> float:
+    This prevents the *shape of the mask* (missing data) from biasing the ACF.
+
+    pad_factor=2 zero-pads to reduce circular wrap-around artifacts.
+    Returns real ACF map (padded shape if pad_factor>1).
     """
-    Compute isotropic correlation length as the radius where acf drops to 1/e of acf(0).
-    Uses radial profile through center and linear interpolation between bins.
+    x = _ensure_float(x)
+    m = m.to(dtype=x.dtype)
+
+    # masked mean (mu)
+    mu = (x * m).sum() / m.sum().clamp_min(1e-12)
+    x0 = (x - mu) * m  # zero outside mask
+
+    H, W = x.shape
+    if pad_factor is None or pad_factor <= 1:
+        Hp, Wp = H, W
+        x0p, mp = x0, m
+    else:
+        Hp, Wp = pad_factor * H, pad_factor * W
+        x0p = torch.zeros((Hp, Wp), device=x.device, dtype=x.dtype)
+        mp  = torch.zeros((Hp, Wp), device=x.device, dtype=x.dtype)
+        x0p[:H, :W] = x0
+        mp[:H, :W]  = m
+
+    X = torch.fft.fft2(x0p)
+    M = torch.fft.fft2(mp)
+
+    num = torch.fft.ifft2(X * torch.conj(X)).real
+    den = torch.fft.ifft2(M * torch.conj(M)).real.clamp_min(1e-12)
+
+    return num / den
+
+def _integral_lengthscale_from_acf(
+    acf: torch.Tensor,
+    pixel_size: float,
+    r_max_m: Optional[float] = None,
+) -> float:
+    """
+    Integral length scale from isotropic normalized ACF:
+
+      rho(r) = C(r)/C(0)
+      ell_int = ∫ rho(r) dr   (up to first zero crossing, or up to r_max_m)
     """
     H, W = acf.shape
     device, dtype = acf.device, acf.dtype
-    # shift so center at (0,0) for radial binning convenience
+
     acf0 = torch.fft.fftshift(acf)
     peak = acf0[H // 2, W // 2].abs().clamp_min(1e-12)
-    prof_len = min(H, W)
-    # Build radius map in pixels
-    yy, xx = torch.meshgrid(torch.arange(H, device=device), torch.arange(W, device=device), indexing="ij")
-    rr = torch.sqrt((yy - H // 2).float()**2 + (xx - W // 2).float()**2)
-    # Bin edges: 0..min(H,W)/2 pixels
-    rmax = 0.5 * min(H, W)
-    bins = torch.linspace(0, rmax, steps=int(rmax) + 1, device=device, dtype=dtype)
-    prof = _radial_profile(acf0, rr, bins)
-    prof = prof / peak  # normalize so C(0)=1
-    target = math.exp(-1.0)
-    # locate first index where prof < 1/e
-    below = torch.nonzero(prof < target, as_tuple=False)
-    if below.numel() == 0:
-        return float("nan")
-    i = int(below[0, 0].item())
-    if i == 0:
-        ell_px = bins[1].item()
+
+    yy, xx = torch.meshgrid(
+        torch.arange(H, device=device),
+        torch.arange(W, device=device),
+        indexing="ij",
+    )
+    rr_px = torch.sqrt((yy - H // 2).float()**2 + (xx - W // 2).float()**2).to(dtype)
+
+    # Radius bins in pixels (1-pixel bins)
+    rmax_px = 0.5 * min(H, W)
+    bins = torch.linspace(0, rmax_px, steps=int(rmax_px) + 1, device=device, dtype=dtype)
+
+    prof = _radial_profile(acf0, rr_px, bins)
+    rho = prof / peak  # normalize so rho(0)=1
+
+    # Convert bin centers to meters
+    r_centers_px = 0.5 * (bins[:-1] + bins[1:])
+    r_centers_m = r_centers_px * pixel_size
+
+    # Choose cutoff: first zero crossing or provided r_max_m
+    if r_max_m is not None:
+        cutoff = r_centers_m <= float(r_max_m)
+        rho_use = rho[cutoff]
+        r_use = r_centers_m[cutoff]
     else:
-        x0, x1 = bins[i - 1].item(), bins[i].item()
-        y0, y1 = prof[i - 1].item(), prof[i].item()
-        # linear interpolation to y=1/e
-        if abs(y1 - y0) < 1e-12:
-            ell_px = x1
+        # integrate until first rho <= 0 (exclude the point that crosses below 0)
+        neg = torch.nonzero(rho <= 0, as_tuple=False)
+        if neg.numel() > 0:
+            j = int(neg[0, 0].item())
+            rho_use = rho[:j]
+            r_use = r_centers_m[:j]
         else:
-            t = (target - y0) / (y1 - y0)
-            ell_px = x0 + t * (x1 - x0)
-    return float(ell_px * pixel_size)
+            rho_use = rho
+            r_use = r_centers_m
+
+    if rho_use.numel() < 2:
+        return float("nan")
+
+    # Trapezoidal integration over r (meters)
+    ell = torch.trapz(rho_use, r_use).item()
+    return float(ell)
 
 
 def _common_bins(a: torch.Tensor, b: torch.Tensor, bins: int = 256) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -329,55 +378,66 @@ def sigma_error(gt: torch.Tensor, pred: torch.Tensor, mask: Optional[torch.Tenso
 
 
 @torch.no_grad()
+@torch.no_grad()
 def corr_length_error(
     gt: torch.Tensor,
     pred: torch.Tensor,
     mask: Optional[torch.Tensor] = None,
     pixel_size: float = 1.0,
+    pad_factor: int = 2,
+    r_max_m: Optional[float] = None,  # optional cap for integral method
 ) -> torch.Tensor:
     """
-    Correlation length relative error (%), using isotropic ACF via FFT (Wiener–Khinchin).
-    Length scale ℓ is the radius where normalized ACF falls to 1/e.
-    Returns |(ℓ_pred - ℓ_true)/ℓ_true| * 100.
+    Correlation length relative error (%).
+
+    Robust version:
+      - Uses an unbiased masked ACF estimator (normalizes by the mask ACF).
+      - Uses zero-padding to reduce FFT wrap-around artifacts.
+      - Uses integral length scale from normalized ACF.
     """
     gt = _ensure_float(gt)
     pred = _ensure_float(pred)
 
-    # Reduce to 2D maps (batch over first dim)
     GT = _to_2d(gt)
     PR = _to_2d(pred)
+
     if mask is not None:
         mask = _broadcast_mask_like(GT, mask)
 
     ells_true = []
     ells_pred = []
+
     for i in range(GT.shape[0]):
         g = GT[i]
         p = PR[i]
-        if mask is not None:
-            m = mask[i].bool()
-            g = torch.where(m, g, torch.nan)
-            p = torch.where(m, p, torch.nan)
-        # fill NaNs with local mean to avoid FFT NaNs (approximate; mask already affects stats)
-        def _fillnan(z):
-            if torch.isnan(z).any():
-                mean = torch.nanmean(z)
-                z = torch.where(torch.isfinite(z), z, mean)
-            return z - torch.nanmean(z)
 
-        g = _fillnan(g)
-        p = _fillnan(p)
-        # autocorrelation
-        acf_g = _acf2d(g)
-        acf_p = _acf2d(p)
-        # get ℓ in meters
-        ell_g = _find_lengthscale_from_acf(acf_g, pixel_size)
-        ell_p = _find_lengthscale_from_acf(acf_p, pixel_size)
+        # Valid mask for this map
+        if mask is not None:
+            m = mask[i].bool() & torch.isfinite(g) & torch.isfinite(p)
+        else:
+            m = torch.isfinite(g) & torch.isfinite(p)
+
+        if m.sum() < 64:  # too few valid pixels for a stable ACF
+            ells_true.append(float("nan"))
+            ells_pred.append(float("nan"))
+            continue
+
+        # Fill invalid values with 0 (safe because we multiply by m in the estimator)
+        g0 = torch.where(m, g, torch.zeros_like(g))
+        p0 = torch.where(m, p, torch.zeros_like(p))
+
+        acf_g = _acf2d_unbiased_masked(g0, m, pad_factor=pad_factor)
+        acf_p = _acf2d_unbiased_masked(p0, m, pad_factor=pad_factor)
+
+        ell_g = _integral_lengthscale_from_acf(acf_g, pixel_size, r_max_m=r_max_m)
+        ell_p = _integral_lengthscale_from_acf(acf_p, pixel_size, r_max_m=r_max_m)
+
         ells_true.append(ell_g)
         ells_pred.append(ell_p)
 
     ell_true = torch.tensor(ells_true, device=gt.device, dtype=gt.dtype)
     ell_pred = torch.tensor(ells_pred, device=gt.device, dtype=gt.dtype)
+
     rel = (ell_pred - ell_true).abs() / ell_true.clamp_min(1e-12)
     return torch.nanmean(rel) * 100.0
 
