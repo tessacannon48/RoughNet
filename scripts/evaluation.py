@@ -1,20 +1,16 @@
 #evaluation.py 
 
 import os, sys, json, glob, time, argparse, csv
-from math import ceil
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
 import rasterio
-from rasterio.merge import merge as rio_merge
 from rasterio.enums import Resampling
 from rasterio.warp import reproject
 from tqdm import tqdm
 import yaml
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 import warnings
-import matplotlib.ticker as ticker
 from rasterio.shutil import delete as rio_delete
 from scipy.ndimage import gaussian_filter1d
 
@@ -30,10 +26,10 @@ from src.utils.recon_metrics import (
     rmse as rmse_recon,
     bias as bias_recon,
     sigma_error,
-    corr_length_error,
     normal_angle_error,
     average_jsd_multiscale,
     log_psd_rmse,
+    zncc,
 )
 
 warnings.filterwarnings("ignore")
@@ -41,7 +37,7 @@ warnings.filterwarnings("ignore")
 NODATA = -9999.0
 
 
-def get_region_preset(region_name: str):
+def get_region_preset(region_name: str, model_type: str = "cosine"):
     key = region_name.strip().lower()
     if key not in ("pondinlet", "tuk", "cambridge"):
         raise ValueError(
@@ -49,8 +45,15 @@ def get_region_preset(region_name: str):
             "Expected one of: 'pondinlet', 'tuk', 'cambridge'."
         )
 
+    model_type = model_type.strip().lower()
+    if model_type not in ("cosine", "linear"):
+        raise ValueError(
+            f"Unknown model type: {model_type!r}. "
+            "Expected one of: 'cosine', 'linear'."
+        )
+
     root = "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation"
-    ckpt_path = f"{root}/models/cosine_k6_att_best.pth"
+    ckpt_path = f"{root}/models/{model_type}_k6_att_best.pth"
 
     if key == "pondinlet":
         pretty_name = "Pond Inlet"
@@ -74,7 +77,7 @@ def get_region_preset(region_name: str):
         "ckpt_path": ckpt_path,
         "s2_dir": f"{root}/input_data/s2_patches_{key}",
         "lidar_dir": f"{root}/input_data/lidar_patches_{key}",
-        "out_dir": f"{root}/figures/cosine_model/{out_prefix}_{key}",
+        "out_dir": f"{root}/figures/{model_type}_model/{out_prefix}_{key}",
     }
 
 
@@ -183,23 +186,139 @@ def write_gt_singleband_from_patch(gt_patch_path, out_path):
         dst.write(data, 1)
     return out_path
 
+
+def _compute_distance_weights(shape, valid_mask=None):
+    """Compute distance-to-edge weights for blending. Pixels near center get higher weights."""
+    from scipy.ndimage import distance_transform_edt
+    
+    h, w = shape
+    
+    if valid_mask is not None:
+        # Distance from invalid pixels (edges of valid region)
+        weights = distance_transform_edt(valid_mask).astype(np.float32)
+    else:
+        # Distance from image edges
+        edge_mask = np.ones((h, w), dtype=bool)
+        edge_mask[0, :] = False
+        edge_mask[-1, :] = False
+        edge_mask[:, 0] = False
+        edge_mask[:, -1] = False
+        weights = distance_transform_edt(edge_mask).astype(np.float32)
+    
+    # Normalize to [0, 1] with minimum weight at edges
+    if weights.max() > 0:
+        weights = weights / weights.max()
+    
+    # Apply power to make center weighting stronger
+    weights = weights ** 4
+    
+    # Ensure minimum weight for valid pixels
+    weights = np.clip(weights, 0.001, 1.0)
+    
+    return weights
+
+
 def build_averaged_mosaic(tif_list, out_path, compress=None, nodata=NODATA):
+    """Build mosaic with distance-weighted blending at overlaps."""
     assert len(tif_list) > 0
+    
+    print("  Building blended mosaic with distance-weighted averaging...")
+    
+    # First pass: determine output bounds and resolution
     srcs = [rasterio.open(fp) for fp in tif_list]
     try:
-        mosaic, transform = rio_merge(srcs, nodata=nodata)
-        arr = mosaic[0].astype(np.float32)
-        arr = np.where(np.isfinite(arr), arr, nodata).astype(np.float32)
+        # Get combined bounds
+        all_bounds = [s.bounds for s in srcs]
+        dst_w = min(b.left for b in all_bounds)
+        dst_s = min(b.bottom for b in all_bounds)
+        dst_e = max(b.right for b in all_bounds)
+        dst_n = max(b.top for b in all_bounds)
+        
+        # Use resolution from first source
+        res_x = srcs[0].res[0]
+        res_y = srcs[0].res[1]
+        crs = srcs[0].crs
+        
+        # Compute output dimensions
+        out_width = int(np.ceil((dst_e - dst_w) / res_x))
+        out_height = int(np.ceil((dst_n - dst_s) / res_y))
+        
+        # Output transform
+        from rasterio.transform import from_bounds
+        out_transform = from_bounds(dst_w, dst_s, dst_e, dst_n, out_width, out_height)
+        
+        print(f"    Output size: {out_width} x {out_height}")
+        
+        # Initialize accumulators
+        weighted_sum = np.zeros((out_height, out_width), dtype=np.float64)
+        weight_sum = np.zeros((out_height, out_width), dtype=np.float64)
+        
+        # Process each tile
+        for i, src in enumerate(tqdm(srcs, desc="    Blending tiles")):
+            # Read data
+            data = src.read(1).astype(np.float32)
+            data = np.where(data == nodata, np.nan, data)
 
-        ref = srcs[0]
+            #margin = 16  # discard 16px border
+            #data[:margin, :] = np.nan
+            #data[-margin:, :] = np.nan
+            #data[:, :margin] = np.nan
+            #data[:, -margin:] = np.nan
+            
+            # Create valid mask and compute weights
+            valid = np.isfinite(data)
+            if not np.any(valid):
+                continue
+            
+            weights = _compute_distance_weights(data.shape, valid_mask=valid)
+            weights = np.where(valid, weights, 0)
+            
+            # Find where this tile maps in output
+            # Get tile bounds
+            tile_bounds = src.bounds
+            
+            # Compute pixel coordinates in output
+            col_off = int(np.round((tile_bounds.left - dst_w) / res_x))
+            row_off = int(np.round((dst_n - tile_bounds.top) / res_y))
+            
+            # Handle edge cases
+            src_row_start = max(0, -row_off)
+            src_col_start = max(0, -col_off)
+            dst_row_start = max(0, row_off)
+            dst_col_start = max(0, col_off)
+            
+            src_row_end = min(data.shape[0], out_height - row_off)
+            src_col_end = min(data.shape[1], out_width - col_off)
+            dst_row_end = min(out_height, row_off + data.shape[0])
+            dst_col_end = min(out_width, col_off + data.shape[1])
+            
+            # Extract regions
+            src_data = data[src_row_start:src_row_end, src_col_start:src_col_end]
+            src_weights = weights[src_row_start:src_row_end, src_col_start:src_col_end]
+            
+            # Replace NaN with 0 for accumulation (weights will be 0 there)
+            src_data_clean = np.where(np.isfinite(src_data), src_data, 0)
+            
+            # Accumulate
+            weighted_sum[dst_row_start:dst_row_end, dst_col_start:dst_col_end] += src_data_clean * src_weights
+            weight_sum[dst_row_start:dst_row_end, dst_col_start:dst_col_end] += src_weights
+        
+        # Compute weighted average
+        with np.errstate(divide='ignore', invalid='ignore'):
+            result = weighted_sum / weight_sum
+        
+        # Set nodata where no data was accumulated
+        result = np.where(weight_sum > 0, result, nodata).astype(np.float32)
+        
+        # Write output
         prof = {
             "driver": "GTiff",
-            "height": int(arr.shape[0]),
-            "width": int(arr.shape[1]),
+            "height": out_height,
+            "width": out_width,
             "count": 1,
             "dtype": "float32",
-            "crs": ref.crs,
-            "transform": transform,
+            "crs": crs,
+            "transform": out_transform,
             "tiled": False,
             "nodata": float(nodata),
         }
@@ -213,10 +332,14 @@ def build_averaged_mosaic(tif_list, out_path, compress=None, nodata=NODATA):
                 os.remove(out_path)
 
         with rasterio.open(out_path, "w", **prof) as dst:
-            dst.write(arr, 1)
+            dst.write(result, 1)
+        
+        print(f"    Blended mosaic saved to {out_path}")
+        
     finally:
         for s in srcs:
             s.close()
+    
     return out_path
 
 
@@ -234,57 +357,259 @@ def _apply_pred_cleanup(a):
     return a
 
 
-def plot_2d_maps(gt_array, pred_array, diff_array, out_path):
+def _compute_optimal_rotation(mask):
+    """Compute optimal rotation angle to make the longest edge of the region horizontal."""
+    from scipy.spatial import ConvexHull
+    
+    # Get coordinates of valid pixels
+    ys, xs = np.where(mask)
+    if len(xs) < 10:
+        return 0.0
+    
+    # Subsample for efficiency if too many points
+    if len(xs) > 5000:
+        idx = np.random.choice(len(xs), 5000, replace=False)
+        xs, ys = xs[idx], ys[idx]
+    
+    points = np.column_stack([xs, ys])
+    
+    try:
+        hull = ConvexHull(points)
+        hull_points = points[hull.vertices]
+    except:
+        # Fall back to all points if convex hull fails
+        hull_points = points
+    
+    # Find minimum area bounding rectangle using rotating calipers approach
+    # Test angles based on hull edges
+    best_angle = 0.0
+    best_aspect = 0.0  # width / height ratio
+    
+    n = len(hull_points)
+    for i in range(n):
+        # Get edge vector
+        p1 = hull_points[i]
+        p2 = hull_points[(i + 1) % n]
+        edge = p2 - p1
+        
+        # Angle of this edge
+        edge_angle = np.degrees(np.arctan2(edge[1], edge[0]))
+        
+        # Rotate all points by negative of this angle
+        rad = np.radians(-edge_angle)
+        cos_a, sin_a = np.cos(rad), np.sin(rad)
+        rotated = np.column_stack([
+            hull_points[:, 0] * cos_a - hull_points[:, 1] * sin_a,
+            hull_points[:, 0] * sin_a + hull_points[:, 1] * cos_a
+        ])
+        
+        # Compute bounding box
+        width = rotated[:, 0].max() - rotated[:, 0].min()
+        height = rotated[:, 1].max() - rotated[:, 1].min()
+        
+        # We want width > height (longest side horizontal)
+        aspect = width / max(height, 1e-6)
+        
+        if aspect > best_aspect:
+            best_aspect = aspect
+            best_angle = -edge_angle  # Negate to rotate data
+    
+    # Normalize angle to reasonable range
+    while best_angle > 90:
+        best_angle -= 180
+    while best_angle < -90:
+        best_angle += 180
+    
+    # If result would make it taller than wide, rotate 90 degrees
+    if best_aspect < 1.0:
+        best_angle += 90 if best_angle < 0 else -90
+    
+    return best_angle
+
+
+def _crop_to_valid(arr, mask, padding=10):
+    """Crop array to bounding box of valid pixels with padding."""
+    ys, xs = np.where(mask)
+    if len(xs) == 0:
+        return arr, (0, arr.shape[0], 0, arr.shape[1])
+    
+    y_min, y_max = max(0, ys.min() - padding), min(arr.shape[0], ys.max() + padding + 1)
+    x_min, x_max = max(0, xs.min() - padding), min(arr.shape[1], xs.max() + padding + 1)
+    
+    return arr[y_min:y_max, x_min:x_max], (y_min, y_max, x_min, x_max)
+
+
+def _rotate_and_crop(arr, angle, mask=None):
+    """Rotate array and optionally crop to valid region."""
+    from scipy.ndimage import rotate as ndimage_rotate
+    
+    if abs(angle) < 0.5:  # Skip rotation for very small angles
+        rotated = arr
+    else:
+        # Rotate with NaN-safe handling
+        arr_filled = np.where(np.isfinite(arr), arr, 0)
+        rotated = ndimage_rotate(arr_filled, angle, reshape=True, order=1, mode='constant', cval=np.nan)
+        
+        # Also rotate the mask to track valid regions
+        mask_rot = ndimage_rotate((~np.isnan(arr)).astype(float), angle, reshape=True, order=0, mode='constant', cval=0)
+        rotated = np.where(mask_rot > 0.5, rotated, np.nan)
+    
+    return rotated
+
+
+def plot_2d_maps(gt_array, pred_array, diff_array, out_path, auto_orient=True, manual_rotation=None, vmin_override=None, vmax_override=None, pct_clip=2.0, split_stack=False):
     gt_array = gt_array.astype(np.float32)
     pred_array = pred_array.astype(np.float32)
     diff_array = diff_array.astype(np.float32)
+    
+    # Create combined valid mask
+    valid_mask = np.isfinite(gt_array) & np.isfinite(pred_array)
+    
+    if manual_rotation is not None:
+        # Use manually specified rotation
+        angle = manual_rotation
+        print(f"  Manual rotation: {angle:.1f} degrees")
+        
+        # Rotate all arrays
+        gt_rot = _rotate_and_crop(gt_array, angle)
+        pred_rot = _rotate_and_crop(pred_array, angle)
+        diff_rot = _rotate_and_crop(diff_array, angle)
+        
+        # Compute new valid mask and crop
+        valid_rot = np.isfinite(gt_rot) & np.isfinite(pred_rot)
+        gt_array, bbox = _crop_to_valid(gt_rot, valid_rot, padding=20)
+        pred_array, _ = _crop_to_valid(pred_rot, valid_rot, padding=20)
+        diff_array, _ = _crop_to_valid(diff_rot, valid_rot, padding=20)
+    elif auto_orient:
+        # Compute optimal rotation angle
+        angle = _compute_optimal_rotation(valid_mask)
+        print(f"  Auto-orientation: rotating by {angle:.1f} degrees")
+        
+        # Rotate all arrays
+        gt_rot = _rotate_and_crop(gt_array, angle)
+        pred_rot = _rotate_and_crop(pred_array, angle)
+        diff_rot = _rotate_and_crop(diff_array, angle)
+        
+        # Compute new valid mask and crop
+        valid_rot = np.isfinite(gt_rot) & np.isfinite(pred_rot)
+        gt_array, bbox = _crop_to_valid(gt_rot, valid_rot, padding=20)
+        pred_array, _ = _crop_to_valid(pred_rot, valid_rot, padding=20)
+        diff_array, _ = _crop_to_valid(diff_rot, valid_rot, padding=20)
+    else:
+        # Just crop without rotation
+        gt_array, bbox = _crop_to_valid(gt_array, valid_mask, padding=20)
+        pred_array, _ = _crop_to_valid(pred_array, valid_mask, padding=20)
+        diff_array, _ = _crop_to_valid(diff_array, valid_mask, padding=20)
 
     stack = np.stack([gt_array, pred_array], axis=0)
-    vmin = float(np.nanpercentile(stack, 0.02))
-    vmax = float(np.nanpercentile(stack, 99.98))
+    
+    # Color scale: use manual overrides if provided, otherwise percentile clipping
+    if vmin_override is not None:
+        vmin = float(vmin_override)
+    else:
+        vmin = float(np.nanpercentile(stack, pct_clip))
+    
+    if vmax_override is not None:
+        vmax = float(vmax_override)
+    else:
+        vmax = float(np.nanpercentile(stack, 100 - pct_clip))
+    
+    print(f"  Color scale: vmin={vmin:.2f}, vmax={vmax:.2f} (pct_clip={pct_clip}%)")
 
     d = diff_array[np.isfinite(diff_array)]
-    A = np.percentile(np.abs(d), 99) if d.size else 1.0
+    A = np.percentile(np.abs(d), 100 - pct_clip) if d.size else 1.0
     A = float(max(A, 1e-6))
+    
+    # Compute aspect ratio for proper scaling
+    h, w = gt_array.shape
+    aspect = w / h
+    
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+    
+    if split_stack:
+        # Split wide region in half horizontally, stack halves vertically
+        mid = w // 2
+        gt_left, gt_right = gt_array[:, :mid], gt_array[:, mid:]
+        pred_left, pred_right = pred_array[:, :mid], pred_array[:, mid:]
+        diff_left, diff_right = diff_array[:, :mid], diff_array[:, mid:]
+        
+        print(f"  Split-stack mode: splitting {w}px width into two {mid}px halves")
+        
+        # Figure sizing - 3 groups, each with 2 image rows + colorbar
+        half_aspect = mid / h
+        fig_width = min(12, max(6, half_aspect * 3))
+        fig_height = fig_width / half_aspect * 6 + 5  # 6 image rows + colorbars + spacing
+        
+        from matplotlib.gridspec import GridSpec
+        fig = plt.figure(figsize=(fig_width, fig_height))
+        
+        # GridSpec: 11 rows (2 img + 1 cbar + spacer) × 3 groups, minus last spacer
+        # Format: [img, img, cbar, space, img, img, cbar, space, img, img, cbar]
+        gs = GridSpec(11, 1, figure=fig, 
+                      height_ratios=[1, 1, 0.08, 0.65, 1, 1, 0.08, 0.65, 1, 1, 0.08],
+                      hspace=0.02)
+        
+        groups = [
+            ("Ground Truth", gt_left, gt_right, "terrain", vmin, vmax, "LiDAR Residual (m)", 0),
+            ("Prediction", pred_left, pred_right, "terrain", vmin, vmax, "LiDAR Residual (m)", 4),
+            ("Error (Pred - GT)", diff_left, diff_right, "seismic", -A, +A, "Error (m)", 8),
+        ]
+        
+        for title, left_data, right_data, cmap, v0, v1, label, row_start in groups:
+            ax_top = fig.add_subplot(gs[row_start])
+            ax_bot = fig.add_subplot(gs[row_start + 1])
+            cax = fig.add_subplot(gs[row_start + 2])
+            
+            # Title only on top image with padding
+            ax_top.set_title(title, fontsize=12, fontweight='bold', pad=10)
+            
+            im_top = ax_top.imshow(left_data, cmap=cmap, vmin=v0, vmax=v1, aspect='equal')
+            im_bot = ax_bot.imshow(right_data, cmap=cmap, vmin=v0, vmax=v1, aspect='equal')
+            
+            ax_top.axis("off")
+            ax_bot.axis("off")
+            
+            # Shared colorbar below both halves
+            cbar = fig.colorbar(im_top, cax=cax, orientation="horizontal")
+            cbar.set_label(label, fontsize=10)
+            cbar.ax.tick_params(labelsize=8)
+    else:
+        # Standard 3-row layout
+        # Dynamically size figure based on data aspect ratio
+        if aspect >= 1:  # Wider than tall
+            fig_width = min(14, max(8, aspect * 4))
+            fig_height = fig_width / aspect * 3 + 2  # 3 subplots + colorbar space
+        else:  # Taller than wide
+            fig_height = min(18, max(10, 12 / aspect))
+            fig_width = fig_height * aspect / 3 + 1
+        
+        fig, axes = plt.subplots(3, 1, figsize=(fig_width, fig_height))
 
-    fig, axes = plt.subplots(3, 1, figsize=(7, 5))
+        im0 = axes[0].imshow(gt_array, cmap="terrain", vmin=vmin, vmax=vmax, aspect='equal')
+        axes[0].set_title("Ground Truth", fontsize=12, fontweight='bold')
+        axes[0].axis("off")
 
-    im0 = axes[0].imshow(gt_array, cmap="terrain", vmin=vmin, vmax=vmax)
-    axes[0].set_title("Ground Truth")
-    axes[0].axis("off")
+        im1 = axes[1].imshow(pred_array, cmap="terrain", vmin=vmin, vmax=vmax, aspect='equal')
+        axes[1].set_title("Prediction", fontsize=12, fontweight='bold')
+        axes[1].axis("off")
 
-    im1 = axes[1].imshow(pred_array, cmap="terrain", vmin=vmin, vmax=vmax)
-    axes[1].set_title("Prediction")
-    axes[1].axis("off")
+        im2 = axes[2].imshow(diff_array, cmap="seismic", vmin=-A, vmax=+A, aspect='equal')
+        axes[2].set_title("Error (Pred - GT)", fontsize=12, fontweight='bold')
+        axes[2].axis("off")
+        
+        for ax, im, label in [(axes[0], im0, "LiDAR Residual (m)"), 
+                               (axes[1], im1, "LiDAR Residual (m)"), 
+                               (axes[2], im2, "Error (m)")]:
+            divider = make_axes_locatable(ax)
+            cax = divider.append_axes("bottom", size="5%", pad=0.1)
+            cbar = fig.colorbar(im, cax=cax, orientation="horizontal")
+            cbar.set_label(label, fontsize=10)
+            cbar.ax.tick_params(labelsize=8)
 
-    im2 = axes[2].imshow(diff_array, cmap="seismic", vmin=-A, vmax=+A)
-    axes[2].set_title("Error (Pred - GT)")
-    axes[2].axis("off")
-
-    cbar_ax = fig.add_axes([0.05, 0.7, 0.92, 0.02])
-    cbar0 = fig.colorbar(im0, cax=cbar_ax, orientation="horizontal")
-    cbar0.set_label("m")
-    cbar0.ax.xaxis.set_ticks_position("bottom")
-    cbar0.ax.xaxis.set_label_position("bottom")
-
-    cbar_ax = fig.add_axes([0.05, 0.41, 0.92, 0.02])
-    cbar1 = fig.colorbar(im1, cax=cbar_ax, orientation="horizontal", shrink=0.1)
-    cbar1.set_label("m")
-    cbar1.ax.xaxis.set_ticks_position("bottom")
-    cbar1.ax.xaxis.set_label_position("bottom")
-
-    formatter = ticker.ScalarFormatter(useOffset=False, useMathText=False)
-    formatter.set_scientific(False)
-    formatter.set_powerlimits((0, 0))
-    cbar_ax = fig.add_axes([0.05, 0.12, 0.92, 0.02])
-    cbar2 = fig.colorbar(im2, cax=cbar_ax, orientation="horizontal", format=formatter)
-    cbar2.set_label("m")
-    cbar2.ax.xaxis.set_ticks_position("bottom")
-    cbar2.ax.xaxis.set_label_position("bottom")
-
-    plt.tight_layout()
+    if not split_stack:
+        plt.tight_layout()
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    fig.savefig(out_path, dpi=300, bbox_inches="tight", facecolor='white')
     plt.close(fig)
     print(f"Saved 2D composite to {out_path}")
 
@@ -311,8 +636,8 @@ def _compute_metrics_tensor(gt_t, pr_t, mask_t, px, jsd_scales, jsd_bins, use_so
         "rmse_phys_m": float(rmse_recon(gt_t, pr_t, mask=full_mask).item()),
         "bias_phys_m": float(bias_recon(gt_t, pr_t, mask=full_mask).item()),
         "sigma_error_pct": float(sigma_error(gt_t, pr_t, mask=full_mask).item()),
-        "corr_length_error_pct": float(corr_length_error(gt_t, pr_t, mask=full_mask, pixel_size=px).item()),
         "normal_angle_error_deg": float(normal_angle_error(gt_t, pr_t, mask=full_mask, pixel_size=px, use_sobel=use_sobel, degrees=deg).item()),
+        "zncc": float(zncc(gt_t, pr_t, mask=full_mask).item()),
         "jsd": float(average_jsd_multiscale(gt_t, pr_t, scales_m=jsd_scales, pixel_size=px, bins=jsd_bins, mask=full_mask).item()),
         "psd_rmse": float(log_psd_rmse(gt_t, pr_t, pixel_size=px, mask=full_mask, window=use_window).item()),
         "abs_rel_error": abs_rel_error,
@@ -424,8 +749,8 @@ def compute_and_save_patch_metrics(out_dir, cfg):
         if not np.any(mask_np):
             row = {"tile_id": tile_id, "valid_pixel_count": 0}
             for k in [
-                "rmse_phys_m", "bias_phys_m", "sigma_error_pct", "corr_length_error_pct",
-                "normal_angle_error_deg", "jsd", "psd_rmse",
+                "rmse_phys_m", "bias_phys_m", "sigma_error_pct",
+                "normal_angle_error_deg", "zncc", "jsd", "psd_rmse",
                 "gt_mean_val", "gt_std_val", "pred_mean_val", "pred_std_val", "abs_rel_error",
                 "gt_min_val", "gt_max_val", "pred_min_val", "pred_max_val"
             ]:
@@ -461,8 +786,7 @@ def compute_and_save_patch_metrics(out_dir, cfg):
     fieldnames = [
         "tile_id", "valid_pixel_count",
         "rmse_phys_m", "bias_phys_m",
-        "sigma_error_pct", "corr_length_error_pct",
-        "normal_angle_error_deg", "jsd", "psd_rmse", "abs_rel_error",
+        "sigma_error_pct", "normal_angle_error_deg", "zncc", "jsd", "psd_rmse", "abs_rel_error",
         "gt_mean_val", "gt_std_val", "pred_mean_val", "pred_std_val",
         "gt_min_val", "gt_max_val", "pred_min_val", "pred_max_val",
     ]
@@ -486,8 +810,8 @@ def compute_and_save_patch_metrics(out_dir, cfg):
         return float(np.average(v[m], weights=w[m]))
 
     weights = [r["valid_pixel_count"] for r in rows]
-    metrics_keys = ["rmse_phys_m", "bias_phys_m", "sigma_error_pct", "corr_length_error_pct",
-                    "normal_angle_error_deg", "jsd", "psd_rmse", "abs_rel_error"]
+    metrics_keys = ["rmse_phys_m", "bias_phys_m", "sigma_error_pct",
+                    "normal_angle_error_deg", "zncc", "jsd", "psd_rmse", "abs_rel_error"]
 
     macro_avgs = {k: _nanmean([r[k] for r in rows]) for k in metrics_keys}
     weighted_avgs = {k: _weighted_mean([r[k] for r in rows], weights) for k in metrics_keys}
@@ -553,6 +877,11 @@ def plot_region_pdfs(gt_array, pred_array, out_path,
     ax.plot(bin_centers, gt_hist, label=f"Ground truth (n={gt.size:,})", linewidth=2)
     ax.plot(bin_centers, pr_hist, label=f"Prediction (n={pr.size:,})", linewidth=2, linestyle="--")
     ax.set_xlim([xmin, xmax])
+    
+    # Extend y-axis slightly to make room for JSD label
+    ymin, ymax = ax.get_ylim()
+    ax.set_ylim([ymin, ymax * 1.15])
+    
     ax.set_xlabel("LiDAR Residual (m)")
     ax.set_ylabel("Probability density")
     if title:
@@ -927,14 +1256,60 @@ def main():
         ),
     )
     parser.add_argument(
+        "--model",
+        type=str,
+        default="cosine",
+        choices=["cosine", "linear"],
+        help="Model type to use: 'cosine' or 'linear'. Defaults to 'cosine'.",
+    )
+    parser.add_argument(
         "--deterministic-order",
         action="store_true",
         help="Use deterministic tile ordering when downsampling with max-tiles.",
     )
+    parser.add_argument(
+        "--skip-stats",
+        action="store_true",
+        help="Skip reconstruction statistics calculation (only regenerate plots).",
+    )
+    parser.add_argument(
+        "--rotation",
+        type=float,
+        default=None,
+        help="Manual rotation angle in degrees for 2D plots. Use interactive_rotation.py to find optimal value.",
+    )
+    parser.add_argument(
+        "--vmin",
+        type=float,
+        default=None,
+        help="Manual minimum value for elevation colorbar. If not set, uses percentile clipping.",
+    )
+    parser.add_argument(
+        "--vmax",
+        type=float,
+        default=None,
+        help="Manual maximum value for elevation colorbar. If not set, uses percentile clipping.",
+    )
+    parser.add_argument(
+        "--pct-clip",
+        type=float,
+        default=2.0,
+        help="Percentile for color scale clipping (default: 2.0, meaning clip at 2nd and 98th percentile).",
+    )
+    parser.add_argument(
+        "--rebuild-mosaic",
+        action="store_true", 
+        help="Rebuild mosaics from existing pred_tiles/ even when using --skip-predict.",
+    )
+    parser.add_argument(
+        "--split-stack",
+        action="store_true",
+        help="Split wide regions in half horizontally and stack vertically for better visibility (useful for Tuk).",
+    )
 
     args = parser.parse_args()
 
-    preset = get_region_preset(args.region)
+    preset = get_region_preset(args.region, args.model)
     region_key = preset["region_key"]
     region_name = preset["pretty_name"]
     zone_ids = preset["zone_ids"]
@@ -980,12 +1355,37 @@ def main():
             args.skip_predict
             and os.path.exists(pred_mosaic_path)
             and os.path.exists(gt_mosaic_path)
+            and not args.rebuild_mosaic  # Force rebuild if requested
         )
 
         if reuse_ok:
             print("Skipping prediction (reuse mode). Using existing mosaics:")
             print(f"  Pred mosaic: {pred_mosaic_path}")
             print(f"  GT mosaic:   {gt_mosaic_path}")
+            cfg_used = config
+        elif args.skip_predict and args.rebuild_mosaic:
+            # Rebuild mosaics from existing tiles without re-predicting
+            print("Rebuilding mosaics from existing tiles (--rebuild-mosaic)...")
+            pred_tiles_dir = os.path.join(out_dir, "pred_tiles")
+            gt_tiles_dir = os.path.join(out_dir, "gt_tiles")
+            
+            if not os.path.isdir(pred_tiles_dir):
+                raise FileNotFoundError(f"No pred_tiles directory found at {pred_tiles_dir}")
+            
+            pred_tifs = sorted(glob.glob(os.path.join(pred_tiles_dir, "pred_*.tif")))
+            gt_tifs = sorted(glob.glob(os.path.join(gt_tiles_dir, "gt_*.tif")))
+            
+            if not pred_tifs:
+                raise FileNotFoundError(f"No predicted tiles found in {pred_tiles_dir}")
+            
+            print(f"  Found {len(pred_tifs)} predicted tiles, {len(gt_tifs)} GT tiles")
+            
+            print("  Mosaicking predictions →", pred_mosaic_path)
+            build_averaged_mosaic(pred_tifs, pred_mosaic_path, compress="deflate")
+            
+            print("  Mosaicking ground truth →", gt_mosaic_path)
+            build_averaged_mosaic(gt_tifs, gt_mosaic_path, compress="deflate")
+            
             cfg_used = config
         else:
             print(f"Running prediction + mosaicking (sampler={sampler_name})...")
@@ -1023,7 +1423,14 @@ def main():
         )
 
         two_d_path = os.path.join(out_dir, f"{region_key}_mosaic_2d.png")
-        plot_2d_maps(gt_array, pred_array, diff_array, two_d_path)
+        plot_2d_maps(
+            gt_array, pred_array, diff_array, two_d_path,
+            manual_rotation=args.rotation,
+            vmin_override=args.vmin,
+            vmax_override=args.vmax,
+            pct_clip=args.pct_clip,
+            split_stack=args.split_stack,
+        )
 
         three_d_path = os.path.join(out_dir, f"{region_key}_mosaic_3d.png")
         plot_all_three_3d_surfaces(
@@ -1035,8 +1442,11 @@ def main():
             plot_title=f"Predicted 3D Surface for {region_name}",
         )
 
-        compute_and_save_region_metrics(gt_array, pred_array, out_dir, cfg_used)
-        compute_and_save_patch_metrics(out_dir, cfg_used)
+        if not args.skip_stats:
+            compute_and_save_region_metrics(gt_array, pred_array, out_dir, cfg_used)
+            compute_and_save_patch_metrics(out_dir, cfg_used)
+        else:
+            print("Skipping reconstruction statistics (--skip-stats).")
 
         print("\nDone.")
         print("Outputs:")

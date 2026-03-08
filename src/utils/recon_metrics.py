@@ -378,71 +378,6 @@ def sigma_error(gt: torch.Tensor, pred: torch.Tensor, mask: Optional[torch.Tenso
 
 
 @torch.no_grad()
-@torch.no_grad()
-def corr_length_error(
-    gt: torch.Tensor,
-    pred: torch.Tensor,
-    mask: Optional[torch.Tensor] = None,
-    pixel_size: float = 1.0,
-    pad_factor: int = 2,
-    r_max_m: Optional[float] = None,  # optional cap for integral method
-) -> torch.Tensor:
-    """
-    Correlation length relative error (%).
-
-    Robust version:
-      - Uses an unbiased masked ACF estimator (normalizes by the mask ACF).
-      - Uses zero-padding to reduce FFT wrap-around artifacts.
-      - Uses integral length scale from normalized ACF.
-    """
-    gt = _ensure_float(gt)
-    pred = _ensure_float(pred)
-
-    GT = _to_2d(gt)
-    PR = _to_2d(pred)
-
-    if mask is not None:
-        mask = _broadcast_mask_like(GT, mask)
-
-    ells_true = []
-    ells_pred = []
-
-    for i in range(GT.shape[0]):
-        g = GT[i]
-        p = PR[i]
-
-        # Valid mask for this map
-        if mask is not None:
-            m = mask[i].bool() & torch.isfinite(g) & torch.isfinite(p)
-        else:
-            m = torch.isfinite(g) & torch.isfinite(p)
-
-        if m.sum() < 64:  # too few valid pixels for a stable ACF
-            ells_true.append(float("nan"))
-            ells_pred.append(float("nan"))
-            continue
-
-        # Fill invalid values with 0 (safe because we multiply by m in the estimator)
-        g0 = torch.where(m, g, torch.zeros_like(g))
-        p0 = torch.where(m, p, torch.zeros_like(p))
-
-        acf_g = _acf2d_unbiased_masked(g0, m, pad_factor=pad_factor)
-        acf_p = _acf2d_unbiased_masked(p0, m, pad_factor=pad_factor)
-
-        ell_g = _integral_lengthscale_from_acf(acf_g, pixel_size, r_max_m=r_max_m)
-        ell_p = _integral_lengthscale_from_acf(acf_p, pixel_size, r_max_m=r_max_m)
-
-        ells_true.append(ell_g)
-        ells_pred.append(ell_p)
-
-    ell_true = torch.tensor(ells_true, device=gt.device, dtype=gt.dtype)
-    ell_pred = torch.tensor(ells_pred, device=gt.device, dtype=gt.dtype)
-
-    rel = (ell_pred - ell_true).abs() / ell_true.clamp_min(1e-12)
-    return torch.nanmean(rel) * 100.0
-
-
-@torch.no_grad()
 def normal_angle_error(
     gt: torch.Tensor,
     pred: torch.Tensor,
@@ -668,3 +603,141 @@ def log_psd_rmse(
     LP = torch.stack(logs_pred)  # B x K
     rmse = torch.sqrt(torch.mean((LP - LT) ** 2))
     return rmse
+
+
+@torch.no_grad()
+def zncc(
+    gt: torch.Tensor,
+    pred: torch.Tensor,
+    mask: Optional[torch.Tensor] = None,
+    eps: float = 1e-12,
+) -> torch.Tensor:
+    """
+    Zero-mean Normalized Cross-Correlation (ZNCC).
+
+    For each valid 2D map:
+        ZNCC = sum((g - mean_g) * (p - mean_p)) /
+               sqrt(sum((g - mean_g)^2) * sum((p - mean_p)^2))
+
+    Returns the mean ZNCC across maps.
+    Range is approximately [-1, 1]:
+      +1 -> perfect linear agreement in spatial pattern
+       0 -> no linear correlation
+      -1 -> inverse pattern
+
+    Notes:
+      - This is computed on aligned patches/maps, not as a sliding template match.
+      - If either map has near-zero variance over valid pixels, ZNCC is undefined.
+        In that case this function returns NaN for that map, and the final result
+        is the nan-mean across maps.
+    """
+    gt = _ensure_float(gt)
+    pred = _ensure_float(pred)
+
+    GT = _to_2d(gt)
+    PR = _to_2d(pred)
+
+    if mask is not None:
+        mask = _broadcast_mask_like(GT, mask)
+
+    vals = []
+    for i in range(GT.shape[0]):
+        g = GT[i]
+        p = PR[i]
+
+        if mask is not None:
+            m = mask[i].bool() & torch.isfinite(g) & torch.isfinite(p)
+        else:
+            m = torch.isfinite(g) & torch.isfinite(p)
+
+        if m.sum() < 2:
+            vals.append(torch.tensor(float("nan"), device=g.device, dtype=g.dtype))
+            continue
+
+        gv = g[m]
+        pv = p[m]
+
+        g0 = gv - gv.mean()
+        p0 = pv - pv.mean()
+
+        denom = torch.sqrt(
+            g0.pow(2).sum().clamp_min(eps) *
+            p0.pow(2).sum().clamp_min(eps)
+        )
+
+        # If one patch is effectively constant, ZNCC is not meaningful.
+        if torch.isnan(denom) or denom <= eps:
+            vals.append(torch.tensor(float("nan"), device=g.device, dtype=g.dtype))
+            continue
+
+        vals.append((g0 * p0).sum() / denom)
+
+    if len(vals) == 0:
+        return torch.tensor(float("nan"), device=gt.device, dtype=gt.dtype)
+
+    return torch.nanmean(torch.stack(vals))
+
+# Legacy metrics
+
+@torch.no_grad()
+def corr_length_error(
+    gt: torch.Tensor,
+    pred: torch.Tensor,
+    mask: Optional[torch.Tensor] = None,
+    pixel_size: float = 1.0,
+    pad_factor: int = 2,
+    r_max_m: Optional[float] = None,  # optional cap for integral method
+) -> torch.Tensor:
+    """
+    Correlation length relative error (%).
+
+    Robust version:
+      - Uses an unbiased masked ACF estimator (normalizes by the mask ACF).
+      - Uses zero-padding to reduce FFT wrap-around artifacts.
+      - Uses integral length scale from normalized ACF.
+    """
+    gt = _ensure_float(gt)
+    pred = _ensure_float(pred)
+
+    GT = _to_2d(gt)
+    PR = _to_2d(pred)
+
+    if mask is not None:
+        mask = _broadcast_mask_like(GT, mask)
+
+    ells_true = []
+    ells_pred = []
+
+    for i in range(GT.shape[0]):
+        g = GT[i]
+        p = PR[i]
+
+        # Valid mask for this map
+        if mask is not None:
+            m = mask[i].bool() & torch.isfinite(g) & torch.isfinite(p)
+        else:
+            m = torch.isfinite(g) & torch.isfinite(p)
+
+        if m.sum() < 64:  # too few valid pixels for a stable ACF
+            ells_true.append(float("nan"))
+            ells_pred.append(float("nan"))
+            continue
+
+        # Fill invalid values with 0 (safe because we multiply by m in the estimator)
+        g0 = torch.where(m, g, torch.zeros_like(g))
+        p0 = torch.where(m, p, torch.zeros_like(p))
+
+        acf_g = _acf2d_unbiased_masked(g0, m, pad_factor=pad_factor)
+        acf_p = _acf2d_unbiased_masked(p0, m, pad_factor=pad_factor)
+
+        ell_g = _integral_lengthscale_from_acf(acf_g, pixel_size, r_max_m=r_max_m)
+        ell_p = _integral_lengthscale_from_acf(acf_p, pixel_size, r_max_m=r_max_m)
+
+        ells_true.append(ell_g)
+        ells_pred.append(ell_p)
+
+    ell_true = torch.tensor(ells_true, device=gt.device, dtype=gt.dtype)
+    ell_pred = torch.tensor(ells_pred, device=gt.device, dtype=gt.dtype)
+
+    rel = (ell_pred - ell_true).abs() / ell_true.clamp_min(1e-12)
+    return torch.nanmean(rel) * 100.0

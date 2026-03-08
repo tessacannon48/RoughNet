@@ -13,6 +13,10 @@ input_data/s2_patches_cambridge/
 # Ignore saved models
 models/
 
+# Ignore temporary diagnostics
+scripts/inspect_lidar_regions_masked.py
+diagnostics/
+
 # Ignore login file
 copernicus_login.py
 
@@ -23,11 +27,10 @@ reconstructions/
 wandb/
 
 # Ignore raw figure outputs
-figures/final_test_cambridge/
-figures/final_val_pondinlet/
-figures/final_val_tuk/
-figures/old_final_test_folders/
+figures/cosine_model/
+figures/linear_model/
 figures/test/
+figures/old_figures/
 
 # Ignore cache
 __pycache__/
