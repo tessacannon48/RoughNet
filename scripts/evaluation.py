@@ -357,6 +357,116 @@ def _apply_pred_cleanup(a):
     return a
 
 
+def build_demeaned_mosaics(pred_tiles_dir, gt_tiles_dir, out_dir):
+    """
+    Build de-meaned mosaics where each tile is shifted by its GT mean.
+    
+    WARNING: This creates tile-boundary artifacts since each tile uses
+    a different reference frame. Useful for visualizing local roughness
+    but not for absolute elevation comparison.
+    
+    Returns: (pred_demeaned_mosaic_path, gt_demeaned_mosaic_path, diff_demeaned_path)
+    """
+    import tempfile
+    import shutil
+    
+    pred_tifs = sorted(glob.glob(os.path.join(pred_tiles_dir, "pred_*.tif")))
+    gt_tifs = sorted(glob.glob(os.path.join(gt_tiles_dir, "gt_*.tif")))
+    
+    if len(pred_tifs) == 0 or len(gt_tifs) == 0:
+        raise FileNotFoundError(f"No tiles found in {pred_tiles_dir} or {gt_tiles_dir}")
+    
+    # Build mapping from tile_id to paths
+    pred_map = {os.path.basename(p)[len("pred_"):-4]: p for p in pred_tifs}
+    gt_map = {os.path.basename(g)[len("gt_"):-4]: g for g in gt_tifs}
+    
+    common_ids = sorted(set(pred_map.keys()) & set(gt_map.keys()))
+    if len(common_ids) == 0:
+        raise ValueError("No matching tile IDs between pred and gt directories")
+    
+    print(f"  Building de-meaned mosaics from {len(common_ids)} tile pairs...")
+    
+    # Create temporary directories for de-meaned tiles
+    dm_pred_dir = os.path.join(out_dir, "pred_tiles_demeaned")
+    dm_gt_dir = os.path.join(out_dir, "gt_tiles_demeaned")
+    os.makedirs(dm_pred_dir, exist_ok=True)
+    os.makedirs(dm_gt_dir, exist_ok=True)
+    
+    dm_pred_tifs = []
+    dm_gt_tifs = []
+    
+    for tid in tqdm(common_ids, desc="  De-meaning tiles"):
+        gt_path = gt_map[tid]
+        pred_path = pred_map[tid]
+        
+        with rasterio.open(gt_path) as g:
+            gt_arr = g.read(1).astype(np.float32)
+            gt_arr = np.where(gt_arr == NODATA, np.nan, gt_arr)
+            gt_profile = g.profile.copy()
+        
+        with rasterio.open(pred_path) as p:
+            pr_arr = p.read(1).astype(np.float32)
+            pr_arr = np.where(pr_arr == NODATA, np.nan, pr_arr)
+            pred_profile = p.profile.copy()
+        
+        # Compute GT mean as reference
+        valid = np.isfinite(gt_arr)
+        if not np.any(valid):
+            continue
+        gt_mean = float(np.nanmean(gt_arr[valid]))
+        
+        # De-mean both
+        gt_dm = gt_arr - gt_mean
+        pr_dm = pr_arr - gt_mean
+        
+        # Write de-meaned GT tile
+        gt_dm_path = os.path.join(dm_gt_dir, f"gt_dm_{tid}.tif")
+        gt_dm_arr = np.where(np.isfinite(gt_dm), gt_dm, NODATA).astype(np.float32)
+        gt_profile.update(dtype="float32", count=1, nodata=float(NODATA))
+        with rasterio.open(gt_dm_path, "w", **gt_profile) as dst:
+            dst.write(gt_dm_arr, 1)
+        dm_gt_tifs.append(gt_dm_path)
+        
+        # Write de-meaned pred tile
+        pr_dm_path = os.path.join(dm_pred_dir, f"pred_dm_{tid}.tif")
+        pr_dm_arr = np.where(np.isfinite(pr_dm), pr_dm, NODATA).astype(np.float32)
+        pred_profile.update(dtype="float32", count=1, nodata=float(NODATA))
+        with rasterio.open(pr_dm_path, "w", **pred_profile) as dst:
+            dst.write(pr_dm_arr, 1)
+        dm_pred_tifs.append(pr_dm_path)
+    
+    # Build mosaics from de-meaned tiles
+    pred_dm_mosaic = os.path.join(out_dir, "pred_mosaic_demeaned.tif")
+    gt_dm_mosaic = os.path.join(out_dir, "gt_mosaic_demeaned.tif")
+    
+    print("  Mosaicking de-meaned predictions...")
+    build_averaged_mosaic(dm_pred_tifs, pred_dm_mosaic, compress="deflate")
+    
+    print("  Mosaicking de-meaned ground truth...")
+    build_averaged_mosaic(dm_gt_tifs, gt_dm_mosaic, compress="deflate")
+    
+    # Compute diff
+    with rasterio.open(gt_dm_mosaic) as g, rasterio.open(pred_dm_mosaic) as p:
+        gt_array = g.read(1, masked=True).astype(np.float32).filled(np.nan)
+        pred_array = p.read(1, masked=True).astype(np.float32).filled(np.nan)
+        gt_array = np.where(gt_array == NODATA, np.nan, gt_array)
+        pred_array = np.where(pred_array == NODATA, np.nan, pred_array)
+        
+        diff_array = pred_array - gt_array
+        diff_path = os.path.join(out_dir, "diff_demeaned.tif")
+        
+        diff_to_write = np.where(np.isfinite(diff_array), diff_array, NODATA).astype(np.float32)
+        prof = g.profile.copy()
+        prof.update(dtype="float32", count=1, compress="deflate", nodata=float(NODATA))
+        
+        with rasterio.open(diff_path, "w", **prof) as dst:
+            dst.write(diff_to_write, 1)
+    
+    print(f"  De-meaned mosaics saved to {out_dir}")
+    
+    return pred_dm_mosaic, gt_dm_mosaic, gt_array, pred_array, diff_array
+
+
 def _compute_optimal_rotation(mask):
     """Compute optimal rotation angle to make the longest edge of the region horizontal."""
     from scipy.spatial import ConvexHull
@@ -918,6 +1028,159 @@ def plot_region_pdfs(gt_array, pred_array, out_path,
         json.dump(meta, f, indent=2)
 
 
+def plot_region_pdfs_demeaned(pred_tiles_dir, gt_tiles_dir, out_path,
+                               bins=256, low_pct=0.5, high_pct=99.5,
+                               smooth_sigma=None, logy=False, title=None):
+    """
+    Build PDFs in local de-meaned space.
+    
+    For each tile pair, compute GT's valid-pixel mean and subtract it from
+    both GT and pred. This isolates local roughness/texture comparison.
+    """
+    pred_tifs = sorted(glob.glob(os.path.join(pred_tiles_dir, "pred_*.tif")))
+    gt_tifs = sorted(glob.glob(os.path.join(gt_tiles_dir, "gt_*.tif")))
+    
+    if len(pred_tifs) == 0 or len(gt_tifs) == 0:
+        raise FileNotFoundError(f"No tiles found in {pred_tiles_dir} or {gt_tiles_dir}")
+    
+    # Build mapping from tile_id to paths
+    pred_map = {}
+    for p in pred_tifs:
+        tid = os.path.basename(p)[len("pred_"):-4]
+        pred_map[tid] = p
+    
+    gt_map = {}
+    for g in gt_tifs:
+        tid = os.path.basename(g)[len("gt_"):-4]
+        gt_map[tid] = g
+    
+    # Find common tile IDs
+    common_ids = sorted(set(pred_map.keys()) & set(gt_map.keys()))
+    if len(common_ids) == 0:
+        raise ValueError("No matching tile IDs between pred and gt directories")
+    
+    print(f"  Building de-meaned PDFs from {len(common_ids)} tile pairs...")
+    
+    gt_demeaned_all = []
+    pr_demeaned_all = []
+    
+    for tid in tqdm(common_ids, desc="  De-meaning tiles"):
+        with rasterio.open(gt_map[tid]) as g, rasterio.open(pred_map[tid]) as p:
+            gt_arr = g.read(1).astype(np.float32)
+            pr_arr = p.read(1).astype(np.float32)
+            
+            # Handle nodata
+            gt_arr = np.where(gt_arr == NODATA, np.nan, gt_arr)
+            pr_arr = np.where(pr_arr == NODATA, np.nan, pr_arr)
+            
+            # Valid mask based on GT
+            valid = np.isfinite(gt_arr) & np.isfinite(pr_arr)
+            if not np.any(valid):
+                continue
+            
+            # Compute GT mean (reference frame for both)
+            gt_mean = float(np.nanmean(gt_arr[valid]))
+            
+            # De-mean both using GT's mean
+            gt_dm = gt_arr[valid] - gt_mean
+            pr_dm = pr_arr[valid] - gt_mean
+            
+            gt_demeaned_all.append(gt_dm)
+            pr_demeaned_all.append(pr_dm)
+    
+    if len(gt_demeaned_all) == 0:
+        raise ValueError("No valid pixels found across all tiles")
+    
+    gt = np.concatenate(gt_demeaned_all).astype(np.float64)
+    pr = np.concatenate(pr_demeaned_all).astype(np.float64)
+    
+    print(f"  Total de-meaned pixels: GT={gt.size:,}, Pred={pr.size:,}")
+    
+    # Build PDFs (same logic as plot_region_pdfs)
+    combined = np.concatenate([gt, pr], axis=0)
+    xmin = float(np.percentile(combined, low_pct))
+    xmax = float(np.percentile(combined, high_pct))
+    if not np.isfinite(xmin) or not np.isfinite(xmax) or xmin >= xmax:
+        xmin = float(np.min(combined))
+        xmax = float(np.max(combined))
+
+    bin_edges = np.linspace(xmin, xmax, bins + 1, dtype=np.float64)
+    bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+    bin_width = bin_edges[1] - bin_edges[0]
+
+    gt_hist, _ = np.histogram(gt, bins=bin_edges, density=True)
+    pr_hist, _ = np.histogram(pr, bins=bin_edges, density=True)
+
+    if smooth_sigma is not None and smooth_sigma > 0:
+        gt_hist = gaussian_filter1d(gt_hist, sigma=smooth_sigma, mode="nearest")
+        pr_hist = gaussian_filter1d(pr_hist, sigma=smooth_sigma, mode="nearest")
+
+    # Compute JSD
+    eps = 1e-12
+    p = gt_hist * bin_width
+    q = pr_hist * bin_width
+    p_sum = p.sum()
+    q_sum = q.sum()
+    if p_sum <= 0 or q_sum <= 0:
+        jsd = float("nan")
+    else:
+        p = p / (p_sum + eps)
+        q = q / (q_sum + eps)
+        m = 0.5 * (p + q)
+
+        def _kl(a, b):
+            a_safe = np.clip(a, eps, 1.0)
+            b_safe = np.clip(b, eps, 1.0)
+            return float(np.sum(a_safe * np.log(a_safe / b_safe)))
+
+        jsd = 0.5 * _kl(p, m) + 0.5 * _kl(q, m)
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(bin_centers, gt_hist, label=f"Ground truth (n={gt.size:,})", linewidth=2)
+    ax.plot(bin_centers, pr_hist, label=f"Prediction (n={pr.size:,})", linewidth=2, linestyle="--")
+    ax.set_xlim([xmin, xmax])
+    
+    ymin, ymax = ax.get_ylim()
+    ax.set_ylim([ymin, ymax * 1.15])
+    
+    ax.set_xlabel("De-meaned Elevation (m)")
+    ax.set_ylabel("Probability density")
+    if title:
+        ax.set_title(title)
+    if logy:
+        ax.set_yscale("log")
+    ax.grid(True, alpha=0.2)
+    ax.legend()
+
+    if np.isfinite(jsd):
+        ax.text(0.02, 0.98, f"JSD = {jsd:.4f}", transform=ax.transAxes,
+                ha="left", va="top", fontsize=11,
+                bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"))
+
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved de-meaned PDF plot → {out_path}")
+
+    meta = {
+        "bins": bins,
+        "low_pct": low_pct,
+        "high_pct": high_pct,
+        "smooth_sigma": smooth_sigma,
+        "logy": logy,
+        "xmin": xmin,
+        "xmax": xmax,
+        "valid_n_gt": int(gt.size),
+        "valid_n_pred": int(pr.size),
+        "jsd": jsd,
+        "num_tiles": len(common_ids),
+        "demeaned": True,
+    }
+    with open(out_path.replace(".png", "_meta.json"), "w") as f:
+        json.dump(meta, f, indent=2)
+
+
 def subsample(arr, step):
     return arr[::step, ::step]
 
@@ -1318,6 +1581,16 @@ def main():
     TEST_LIDAR_DIR = preset["lidar_dir"]
     base_out_dir = preset["out_dir"]
 
+    # Apply region-specific default rotations if not manually specified
+    REGION_ROTATIONS = {
+        "pondinlet": 90,
+        "tuk": 90,
+        "cambridge": 28,
+    }
+    if args.rotation is None and region_key in REGION_ROTATIONS:
+        args.rotation = REGION_ROTATIONS[region_key]
+        print(f"Using default rotation for {region_name}: {args.rotation} degrees")
+
     device = args.device
     if torch.cuda.is_available():
         device = "cuda"
@@ -1420,6 +1693,39 @@ def main():
             smooth_sigma=1.5,
             logy=False,
             title=f"Region PDFs: GT vs Prediction ({region_name})",
+        )
+
+        # De-meaned PDF plot (local roughness comparison)
+        demeaned_pdf_path = os.path.join(out_dir, f"{region_key}_pdfs_demeaned.png")
+        plot_region_pdfs_demeaned(
+            pred_tiles_dir=os.path.join(out_dir, "pred_tiles"),
+            gt_tiles_dir=os.path.join(out_dir, "gt_tiles"),
+            out_path=demeaned_pdf_path,
+            bins=256,
+            low_pct=0.01,
+            high_pct=99.99,
+            smooth_sigma=1.5,
+            logy=False,
+            title=f"De-meaned PDFs: GT vs Prediction ({region_name})",
+        )
+
+        # De-meaned mosaics (local roughness visualization)
+        # WARNING: Tile boundaries will show artifacts due to different reference frames
+        _, _, gt_dm_array, pred_dm_array, diff_dm_array = build_demeaned_mosaics(
+            pred_tiles_dir=os.path.join(out_dir, "pred_tiles"),
+            gt_tiles_dir=os.path.join(out_dir, "gt_tiles"),
+            out_dir=out_dir,
+        )
+        
+        # Plot de-meaned 2D maps
+        dm_2d_path = os.path.join(out_dir, f"{region_key}_mosaic_2d_demeaned.png")
+        plot_2d_maps(
+            gt_dm_array, pred_dm_array, diff_dm_array, dm_2d_path,
+            manual_rotation=args.rotation,
+            vmin_override=None,  # Use symmetric scale for de-meaned
+            vmax_override=None,
+            pct_clip=args.pct_clip,
+            split_stack=args.split_stack,
         )
 
         two_d_path = os.path.join(out_dir, f"{region_key}_mosaic_2d.png")
