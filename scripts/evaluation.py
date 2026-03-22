@@ -360,16 +360,11 @@ def _apply_pred_cleanup(a):
 def build_demeaned_mosaics(pred_tiles_dir, gt_tiles_dir, out_dir):
     """
     Build de-meaned mosaics where each tile is shifted by its GT mean.
-    
-    WARNING: This creates tile-boundary artifacts since each tile uses
-    a different reference frame. Useful for visualizing local roughness
-    but not for absolute elevation comparison.
+    Uses a fixed symmetric color scale (-0.5m to +0.5m) with RdBu_r colormap
+    for better visualization of surface roughness (after professor's method).
     
     Returns: (pred_demeaned_mosaic_path, gt_demeaned_mosaic_path, diff_demeaned_path)
     """
-    import tempfile
-    import shutil
-    
     pred_tifs = sorted(glob.glob(os.path.join(pred_tiles_dir, "pred_*.tif")))
     gt_tifs = sorted(glob.glob(os.path.join(gt_tiles_dir, "gt_*.tif")))
     
@@ -409,13 +404,13 @@ def build_demeaned_mosaics(pred_tiles_dir, gt_tiles_dir, out_dir):
             pr_arr = np.where(pr_arr == NODATA, np.nan, pr_arr)
             pred_profile = p.profile.copy()
         
-        # Compute GT mean as reference
+        # Compute GT mean as reference (local de-meaning: highlights local roughness)
         valid = np.isfinite(gt_arr)
         if not np.any(valid):
             continue
         gt_mean = float(np.nanmean(gt_arr[valid]))
         
-        # De-mean both
+        # De-mean both using GT mean as reference frame
         gt_dm = gt_arr - gt_mean
         pr_dm = pr_arr - gt_mean
         
@@ -565,6 +560,140 @@ def _rotate_and_crop(arr, angle, mask=None):
         rotated = np.where(mask_rot > 0.5, rotated, np.nan)
     
     return rotated
+
+
+def plot_demeaned_color_relief(gt_dm_array, pred_dm_array, diff_dm_array, out_path, vmin=-0.5, vmax=0.5, manual_rotation=None, split_stack=False):
+    """
+    Plot demeaned mosaics using fixed symmetric color scale (-0.5 to +0.5m)
+    with RdBu_r colormap (Red=positive/peaks, Blue=negative/depressions, White=zero/mean).
+    
+    This implements the professor's visualization approach for clearer roughness interpretation.
+    
+    Args:
+        gt_dm_array: Demeaned ground truth array
+        pred_dm_array: Demeaned prediction array  
+        diff_dm_array: Demeaned difference array (pred - gt)
+        out_path: Output PNG file path
+        vmin, vmax: Fixed color scale bounds (default -0.5 to +0.5m)
+        manual_rotation: Optional manual rotation angle in degrees
+        split_stack: If True, split wide regions horizontally for easier viewing
+    """
+    gt_dm_array = gt_dm_array.astype(np.float32)
+    pred_dm_array = pred_dm_array.astype(np.float32)
+    diff_dm_array = diff_dm_array.astype(np.float32)
+    
+    # Create combined valid mask for rotation
+    valid_mask = np.isfinite(gt_dm_array) & np.isfinite(pred_dm_array)
+    
+    if manual_rotation is not None:
+        # Apply manual rotation
+        angle = manual_rotation
+        print(f"  Manual rotation: {angle:.1f} degrees")
+        
+        # Rotate all arrays
+        gt_rot = _rotate_and_crop(gt_dm_array, angle)
+        pred_rot = _rotate_and_crop(pred_dm_array, angle)
+        diff_rot = _rotate_and_crop(diff_dm_array, angle)
+        
+        # Compute new valid mask and crop
+        valid_rot = np.isfinite(gt_rot) & np.isfinite(pred_rot)
+        gt_dm_array, bbox = _crop_to_valid(gt_rot, valid_rot, padding=20)
+        pred_dm_array, _ = _crop_to_valid(pred_rot, valid_rot, padding=20)
+        diff_dm_array, _ = _crop_to_valid(diff_rot, valid_rot, padding=20)
+    else:
+        # Just crop without rotation
+        gt_dm_array, bbox = _crop_to_valid(gt_dm_array, valid_mask, padding=20)
+        pred_dm_array, _ = _crop_to_valid(pred_dm_array, valid_mask, padding=20)
+        diff_dm_array, _ = _crop_to_valid(diff_dm_array, valid_mask, padding=20)
+    
+    print(f"  Visualizing demeaned mosaics with fixed scale: {vmin:.2f}m to {vmax:.2f}m (RdBu_r)")
+    
+    # Compute aspect ratio
+    h, w = gt_dm_array.shape
+    aspect = w / h
+    
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+    
+    if split_stack:
+        # Split wide regions horizontally
+        mid = w // 2
+        gt_left, gt_right = gt_dm_array[:, :mid], gt_dm_array[:, mid:]
+        pred_left, pred_right = pred_dm_array[:, :mid], pred_dm_array[:, mid:]
+        diff_left, diff_right = diff_dm_array[:, :mid], diff_dm_array[:, mid:]
+        
+        print(f"  Split-stack mode: splitting {w}px width into two {mid}px halves")
+        
+        half_aspect = mid / h
+        fig_width = min(12, max(6, half_aspect * 3))
+        fig_height = fig_width / half_aspect * 6 + 5
+        
+        from matplotlib.gridspec import GridSpec
+        fig = plt.figure(figsize=(fig_width, fig_height))
+        
+        gs = GridSpec(11, 1, figure=fig, 
+                      height_ratios=[1, 1, 0.08, 0.65, 1, 1, 0.08, 0.65, 1, 1, 0.08],
+                      hspace=0.02)
+        
+        groups = [
+            ("Ground Truth (De-meaned)", gt_left, gt_right, "RdBu_r", vmin, vmax, "Residual (m)", 0),
+            ("Prediction (De-meaned)", pred_left, pred_right, "RdBu_r", vmin, vmax, "Residual (m)", 4),
+            ("Error (Pred - GT)", diff_left, diff_right, "seismic", -0.3, +0.3, "Error (m)", 8),
+        ]
+        
+        for title, left_data, right_data, cmap, v0, v1, label, row_start in groups:
+            ax_top = fig.add_subplot(gs[row_start])
+            ax_bot = fig.add_subplot(gs[row_start + 1])
+            cax = fig.add_subplot(gs[row_start + 2])
+            
+            ax_top.set_title(title, fontsize=12, fontweight='bold', pad=10)
+            
+            im_top = ax_top.imshow(left_data, cmap=cmap, vmin=v0, vmax=v1, aspect='equal')
+            im_bot = ax_bot.imshow(right_data, cmap=cmap, vmin=v0, vmax=v1, aspect='equal')
+            
+            ax_top.axis("off")
+            ax_bot.axis("off")
+            
+            cbar = fig.colorbar(im_top, cax=cax, orientation="horizontal")
+            cbar.set_label(label, fontsize=10)
+            cbar.ax.tick_params(labelsize=8)
+    else:
+        # Standard 3-row layout
+        if aspect >= 1:
+            fig_width = min(14, max(8, aspect * 4))
+            fig_height = fig_width / aspect * 3 + 2
+        else:
+            fig_height = min(18, max(10, 12 / aspect))
+            fig_width = fig_height * aspect / 3 + 1
+        
+        fig, axes = plt.subplots(3, 1, figsize=(fig_width, fig_height))
+
+        im0 = axes[0].imshow(gt_dm_array, cmap="RdBu_r", vmin=vmin, vmax=vmax, aspect='equal')
+        axes[0].set_title("Ground Truth (De-meaned)", fontsize=12, fontweight='bold')
+        axes[0].axis("off")
+
+        im1 = axes[1].imshow(pred_dm_array, cmap="RdBu_r", vmin=vmin, vmax=vmax, aspect='equal')
+        axes[1].set_title("Prediction (De-meaned)", fontsize=12, fontweight='bold')
+        axes[1].axis("off")
+
+        im2 = axes[2].imshow(diff_dm_array, cmap="seismic", vmin=-0.3, vmax=+0.3, aspect='equal')
+        axes[2].set_title("Error (Pred - GT)", fontsize=12, fontweight='bold')
+        axes[2].axis("off")
+        
+        for ax, im, label in [(axes[0], im0, "Residual (m)"), 
+                               (axes[1], im1, "Residual (m)"), 
+                               (axes[2], im2, "Error (m)")]:
+            divider = make_axes_locatable(ax)
+            cax = divider.append_axes("bottom", size="5%", pad=0.1)
+            cbar = fig.colorbar(im, cax=cax, orientation="horizontal")
+            cbar.set_label(label, fontsize=10)
+            cbar.ax.tick_params(labelsize=8)
+
+    if not split_stack:
+        plt.tight_layout()
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    fig.savefig(out_path, dpi=300, bbox_inches="tight", facecolor='white')
+    plt.close(fig)
+    print(f"  Saved demeaned 2D composite to {out_path}")
 
 
 def plot_2d_maps(gt_array, pred_array, diff_array, out_path, auto_orient=True, manual_rotation=None, vmin_override=None, vmax_override=None, pct_clip=2.0, split_stack=False):
@@ -1710,21 +1839,19 @@ def main():
         )
 
         # De-meaned mosaics (local roughness visualization)
-        # WARNING: Tile boundaries will show artifacts due to different reference frames
+        # Uses fixed color scale (-0.5 to +0.5m) with RdBu_r (after professor's method)
         _, _, gt_dm_array, pred_dm_array, diff_dm_array = build_demeaned_mosaics(
             pred_tiles_dir=os.path.join(out_dir, "pred_tiles"),
             gt_tiles_dir=os.path.join(out_dir, "gt_tiles"),
             out_dir=out_dir,
         )
         
-        # Plot de-meaned 2D maps
+        # Plot de-meaned 2D maps with fixed symmetric color scale (professor's approach)
         dm_2d_path = os.path.join(out_dir, f"{region_key}_mosaic_2d_demeaned.png")
-        plot_2d_maps(
+        plot_demeaned_color_relief(
             gt_dm_array, pred_dm_array, diff_dm_array, dm_2d_path,
+            vmin=-0.5, vmax=0.5,
             manual_rotation=args.rotation,
-            vmin_override=None,  # Use symmetric scale for de-meaned
-            vmax_override=None,
-            pct_clip=args.pct_clip,
             split_stack=args.split_stack,
         )
 
