@@ -10,9 +10,11 @@ from rasterio.warp import reproject
 from tqdm import tqdm
 import yaml
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 import warnings
 from rasterio.shutil import delete as rio_delete
 from scipy.ndimage import gaussian_filter1d
+from matplotlib.ticker import FormatStrFormatter
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
@@ -59,7 +61,7 @@ def get_region_preset(region_name: str, model_type: str = "cosine"):
         pretty_name = "Pond Inlet"
         zone_ids = [4]
     elif key == "tuk":
-        pretty_name = "Tuktokaktuk"
+        pretty_name = "Tuktoyaktuk"
         zone_ids = [13]
     else:
         pretty_name = "Cambridge Bay"
@@ -359,7 +361,8 @@ def _apply_pred_cleanup(a):
 
 def build_demeaned_mosaics(pred_tiles_dir, gt_tiles_dir, out_dir):
     """
-    Build de-meaned mosaics where each tile is shifted by its GT mean.
+    Build local-reference demeaned mosaics where each GT/pred tile pair is shifted
+    by the ground-truth tile mean.
     Uses a fixed symmetric color scale (-0.5m to +0.5m) with RdBu_r colormap
     for better visualization of surface roughness (after professor's method).
     
@@ -564,10 +567,10 @@ def _rotate_and_crop(arr, angle, mask=None):
 
 def plot_demeaned_color_relief(gt_dm_array, pred_dm_array, diff_dm_array, out_path, vmin=-0.5, vmax=0.5, manual_rotation=None, split_stack=False):
     """
-    Plot demeaned mosaics using fixed symmetric color scale (-0.5 to +0.5m)
-    with RdBu_r colormap (Red=positive/peaks, Blue=negative/depressions, White=zero/mean).
-    
-    This implements the professor's visualization approach for clearer roughness interpretation.
+    Plot residual mosaics using a fixed symmetric color scale and patch-consistent styling.
+
+    Ground truth and prediction are shown in residual space with a shared symmetric
+    log normalization. Error is shown as Pred - GT with a fixed linear scale.
     
     Args:
         gt_dm_array: Demeaned ground truth array
@@ -606,7 +609,22 @@ def plot_demeaned_color_relief(gt_dm_array, pred_dm_array, diff_dm_array, out_pa
         pred_dm_array, _ = _crop_to_valid(pred_dm_array, valid_mask, padding=20)
         diff_dm_array, _ = _crop_to_valid(diff_dm_array, valid_mask, padding=20)
     
-    print(f"  Visualizing demeaned mosaics with fixed scale: {vmin:.2f}m to {vmax:.2f}m (RdBu_r)")
+    # Use symmetric log normalization so values near zero are visually emphasized.
+    dm_abs = float(max(abs(vmin), abs(vmax), 1e-6))
+    dm_vmin, dm_vmax = -dm_abs, dm_abs
+    linthresh_dm = 0.1
+    dm_norm = mcolors.SymLogNorm(
+        linthresh=linthresh_dm,
+        linscale=1.0,
+        vmin=dm_vmin,
+        vmax=dm_vmax,
+    )
+    dm_cmap = "RdBu_r"
+
+    print(
+        f"  Visualizing demeaned mosaics with symlog scale: "
+        f"{dm_vmin:.2f}m to {dm_vmax:.2f}m (linthresh={linthresh_dm:.4f})"
+    )
     
     # Compute aspect ratio
     h, w = gt_dm_array.shape
@@ -635,20 +653,24 @@ def plot_demeaned_color_relief(gt_dm_array, pred_dm_array, diff_dm_array, out_pa
                       hspace=0.02)
         
         groups = [
-            ("Ground Truth (De-meaned)", gt_left, gt_right, "RdBu_r", vmin, vmax, "Residual (m)", 0),
-            ("Prediction (De-meaned)", pred_left, pred_right, "RdBu_r", vmin, vmax, "Residual (m)", 4),
-            ("Error (Pred - GT)", diff_left, diff_right, "seismic", -0.3, +0.3, "Error (m)", 8),
+            ("Ground Truth", gt_left, gt_right, dm_cmap, "Elevation (m)", 0, True),
+            ("Predicted", pred_left, pred_right, dm_cmap, "Elevation (m)", 4, True),
+            ("Error (Pred - GT)", diff_left, diff_right, "seismic", "Error (m)", 8, False),
         ]
-        
-        for title, left_data, right_data, cmap, v0, v1, label, row_start in groups:
+
+        for title, left_data, right_data, cmap, label, row_start, use_symlog in groups:
             ax_top = fig.add_subplot(gs[row_start])
             ax_bot = fig.add_subplot(gs[row_start + 1])
             cax = fig.add_subplot(gs[row_start + 2])
-            
+
             ax_top.set_title(title, fontsize=12, fontweight='bold', pad=10)
-            
-            im_top = ax_top.imshow(left_data, cmap=cmap, vmin=v0, vmax=v1, aspect='equal')
-            im_bot = ax_bot.imshow(right_data, cmap=cmap, vmin=v0, vmax=v1, aspect='equal')
+
+            if use_symlog:
+                im_top = ax_top.imshow(left_data, cmap=cmap, norm=dm_norm, aspect='equal')
+                im_bot = ax_bot.imshow(right_data, cmap=cmap, norm=dm_norm, aspect='equal')
+            else:
+                im_top = ax_top.imshow(left_data, cmap=cmap, vmin=-dm_abs, vmax=dm_abs, aspect='equal')
+                im_bot = ax_bot.imshow(right_data, cmap=cmap, vmin=-dm_abs, vmax=dm_abs, aspect='equal')
             
             ax_top.axis("off")
             ax_bot.axis("off")
@@ -656,6 +678,15 @@ def plot_demeaned_color_relief(gt_dm_array, pred_dm_array, diff_dm_array, out_pa
             cbar = fig.colorbar(im_top, cax=cax, orientation="horizontal")
             cbar.set_label(label, fontsize=10)
             cbar.ax.tick_params(labelsize=8)
+
+            if use_symlog:
+                cbar.set_ticks([-dm_abs, -0.1, -0.01, 0.0, 0.01, 0.1, dm_abs])
+                cbar.formatter = FormatStrFormatter('%.2f')
+            else:
+                cbar.set_ticks([-dm_abs, -0.1, 0.0, 0.1, dm_abs])
+                cbar.formatter = FormatStrFormatter('%.2f')
+
+            cbar.update_ticks()
     else:
         # Standard 3-row layout
         if aspect >= 1:
@@ -667,26 +698,37 @@ def plot_demeaned_color_relief(gt_dm_array, pred_dm_array, diff_dm_array, out_pa
         
         fig, axes = plt.subplots(3, 1, figsize=(fig_width, fig_height))
 
-        im0 = axes[0].imshow(gt_dm_array, cmap="RdBu_r", vmin=vmin, vmax=vmax, aspect='equal')
-        axes[0].set_title("Ground Truth (De-meaned)", fontsize=12, fontweight='bold')
+        im0 = axes[0].imshow(gt_dm_array, cmap=dm_cmap, norm=dm_norm, aspect='equal')
+        axes[0].set_title("Ground Truth", fontsize=12, fontweight='bold')
         axes[0].axis("off")
 
-        im1 = axes[1].imshow(pred_dm_array, cmap="RdBu_r", vmin=vmin, vmax=vmax, aspect='equal')
-        axes[1].set_title("Prediction (De-meaned)", fontsize=12, fontweight='bold')
+        im1 = axes[1].imshow(pred_dm_array, cmap=dm_cmap, norm=dm_norm, aspect='equal')
+        axes[1].set_title("Prediction", fontsize=12, fontweight='bold')
         axes[1].axis("off")
 
-        im2 = axes[2].imshow(diff_dm_array, cmap="seismic", vmin=-0.3, vmax=+0.3, aspect='equal')
+        im2 = axes[2].imshow(diff_dm_array, cmap="seismic", vmin=-dm_abs, vmax=+dm_abs, aspect='equal')
         axes[2].set_title("Error (Pred - GT)", fontsize=12, fontweight='bold')
         axes[2].axis("off")
         
-        for ax, im, label in [(axes[0], im0, "Residual (m)"), 
-                               (axes[1], im1, "Residual (m)"), 
-                               (axes[2], im2, "Error (m)")]:
+        for ax, im, label in [
+            (axes[0], im0, "Elevation (m)"),
+            (axes[1], im1, "Elevation (m)"),
+            (axes[2], im2, "Error (m)")
+        ]:
             divider = make_axes_locatable(ax)
             cax = divider.append_axes("bottom", size="5%", pad=0.1)
             cbar = fig.colorbar(im, cax=cax, orientation="horizontal")
             cbar.set_label(label, fontsize=10)
             cbar.ax.tick_params(labelsize=8)
+
+            if label == "Elevation (m)":
+                cbar.set_ticks([-dm_abs, -0.1, -0.01, 0.0, 0.01, 0.1, dm_abs])
+                cbar.formatter = FormatStrFormatter('%.2f')
+            else:
+                cbar.set_ticks([-dm_abs, -0.1, 0.0, 0.1, dm_abs])
+                cbar.formatter = FormatStrFormatter('%.2f')
+
+            cbar.update_ticks()
 
     if not split_stack:
         plt.tight_layout()
@@ -789,8 +831,8 @@ def plot_2d_maps(gt_array, pred_array, diff_array, out_path, auto_orient=True, m
                       hspace=0.02)
         
         groups = [
-            ("Ground Truth", gt_left, gt_right, "terrain", vmin, vmax, "LiDAR Residual (m)", 0),
-            ("Prediction", pred_left, pred_right, "terrain", vmin, vmax, "LiDAR Residual (m)", 4),
+            ("Ground Truth", gt_left, gt_right, "terrain", vmin, vmax, "Elevation (m)", 0),
+            ("Prediction", pred_left, pred_right, "terrain", vmin, vmax, "Elevation (m)", 4),
             ("Error (Pred - GT)", diff_left, diff_right, "seismic", -A, +A, "Error (m)", 8),
         ]
         
@@ -836,8 +878,8 @@ def plot_2d_maps(gt_array, pred_array, diff_array, out_path, auto_orient=True, m
         axes[2].set_title("Error (Pred - GT)", fontsize=12, fontweight='bold')
         axes[2].axis("off")
         
-        for ax, im, label in [(axes[0], im0, "LiDAR Residual (m)"), 
-                               (axes[1], im1, "LiDAR Residual (m)"), 
+        for ax, im, label in [(axes[0], im0, "Elevation (m)"), 
+                               (axes[1], im1, "Elevation (m)"), 
                                (axes[2], im2, "Error (m)")]:
             divider = make_axes_locatable(ax)
             cax = divider.append_axes("bottom", size="5%", pad=0.1)
@@ -1121,7 +1163,7 @@ def plot_region_pdfs(gt_array, pred_array, out_path,
     ymin, ymax = ax.get_ylim()
     ax.set_ylim([ymin, ymax * 1.15])
     
-    ax.set_xlabel("LiDAR Residual (m)")
+    ax.set_xlabel("Elevation (m)")
     ax.set_ylabel("Probability density")
     if title:
         ax.set_title(title)
@@ -1272,7 +1314,7 @@ def plot_region_pdfs_demeaned(pred_tiles_dir, gt_tiles_dir, out_path,
     ymin, ymax = ax.get_ylim()
     ax.set_ylim([ymin, ymax * 1.15])
     
-    ax.set_xlabel("De-meaned Elevation (m)")
+    ax.set_xlabel("Elevation (m)")
     ax.set_ylabel("Probability density")
     if title:
         ax.set_title(title)
@@ -1308,97 +1350,6 @@ def plot_region_pdfs_demeaned(pred_tiles_dir, gt_tiles_dir, out_path,
     }
     with open(out_path.replace(".png", "_meta.json"), "w") as f:
         json.dump(meta, f, indent=2)
-
-
-def subsample(arr, step):
-    return arr[::step, ::step]
-
-
-def shared_vmin_vmax(gt, pr, pct_low=1, pct_high=99, symmetric=False):
-    v = np.concatenate([gt[np.isfinite(gt)], pr[np.isfinite(pr)]])
-    if v.size == 0:
-        return (-1.0, 1.0)
-    if symmetric:
-        A = float(np.percentile(np.abs(v), pct_high))
-        A = max(A, 1e-6)
-        return (-A, +A)
-    vmin = float(np.percentile(v, pct_low))
-    vmax = float(np.percentile(v, pct_high))
-    if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin >= vmax:
-        vmin = float(np.nanmin(v))
-        vmax = float(np.nanmax(v))
-    return (vmin, vmax)
-
-
-def plot_single_3d_surface(ax, lidar_array, title="3D",
-                           cmap="terrain", z_label="LiDAR Residual (m)",
-                           vmin=None, vmax=None, zmin=None, zmax=None):
-    Z = lidar_array.astype(np.float32)
-    mask = np.isfinite(Z)
-    Zm = np.ma.array(Z, mask=~mask)
-
-    h, w = Z.shape
-    X, Y = np.meshgrid(np.arange(w), np.arange(h))
-
-    surf = ax.plot_surface(
-        X, Y, Zm,
-        cmap=cmap, alpha=0.9, edgecolor="none",
-        rstride=1, cstride=1, vmin=vmin, vmax=vmax
-    )
-
-    ax.set_xlim(0, w - 1)
-    ax.set_ylim(0, h - 1)
-
-    if (zmin is not None) and (zmax is not None):
-        ax.set_zlim(zmin, zmax)
-
-    ax.set_zlabel(z_label)
-    ax.set_title(title)
-    ax.view_init(elev=15, azim=70)
-    return surf
-
-
-def plot_all_three_3d_surfaces(gt_array, pred_array, diff_array,
-                               step=4, out_path=None, plot_title="Combined 3D Plots"):
-    gt_s = subsample(gt_array, step)
-    pr_s = subsample(pred_array, step)
-    diff_s = subsample(diff_array, step)
-
-    vmin_gp, vmax_gp = shared_vmin_vmax(gt_s, pr_s, pct_low=1, pct_high=99, symmetric=False)
-    zmin_gp, zmax_gp = vmin_gp, vmax_gp
-
-    fig = plt.figure(figsize=(24, 8))
-    fig.suptitle(plot_title, fontsize=16)
-
-    ax1 = fig.add_subplot(1, 3, 1, projection="3d")
-    s1 = plot_single_3d_surface(ax1, gt_s, "Ground Truth",
-                                cmap="terrain", z_label="LiDAR Residual (m)",
-                                vmin=vmin_gp, vmax=vmax_gp, zmin=zmin_gp, zmax=zmax_gp)
-    fig.colorbar(s1, ax=ax1, shrink=0.5, aspect=10, label="m")
-    ax1.set_ylabel("Pixel Y (1m)")
-    ax1.set_xlabel("Pixel X (1m)")
-
-    ax2 = fig.add_subplot(1, 3, 2, projection="3d")
-    s2 = plot_single_3d_surface(ax2, pr_s, "Predicted",
-                                cmap="terrain", z_label="LiDAR Residual (m)",
-                                vmin=vmin_gp, vmax=vmax_gp, zmin=zmin_gp, zmax=zmax_gp)
-    fig.colorbar(s2, ax=ax2, shrink=0.5, aspect=10, label="m")
-    ax2.set_ylabel("Pixel Y (1m)")
-    ax2.set_xlabel("Pixel X (1m)")
-
-    ax3 = fig.add_subplot(1, 3, 3, projection="3d")
-    s3 = plot_single_3d_surface(ax3, diff_s, "Error (Pred - GT)",
-                                cmap="RdBu", z_label="Difference (m)")
-    fig.colorbar(s3, ax=ax3, shrink=0.5, aspect=10, label="m")
-    ax3.set_ylabel("Pixel Y (1m)")
-    ax3.set_xlabel("Pixel X (1m)")
-
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    if out_path:
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        plt.savefig(out_path, bbox_inches="tight", dpi=300)
-        print(f"Saved 3D plots to {out_path}")
-    plt.close(fig)
 
 
 @torch.no_grad()
@@ -1835,7 +1786,7 @@ def main():
             high_pct=99.99,
             smooth_sigma=1.5,
             logy=False,
-            title=f"De-meaned PDFs: GT vs Prediction ({region_name})",
+            title=f"Elevation Distribution: GT vs Prediction ({region_name})",
         )
 
         # De-meaned mosaics (local roughness visualization)
@@ -1863,16 +1814,6 @@ def main():
             vmax_override=args.vmax,
             pct_clip=args.pct_clip,
             split_stack=args.split_stack,
-        )
-
-        three_d_path = os.path.join(out_dir, f"{region_key}_mosaic_3d.png")
-        plot_all_three_3d_surfaces(
-            gt_array=gt_array,
-            pred_array=pred_array,
-            diff_array=diff_array,
-            step=20,
-            out_path=three_d_path,
-            plot_title=f"Predicted 3D Surface for {region_name}",
         )
 
         if not args.skip_stats:
