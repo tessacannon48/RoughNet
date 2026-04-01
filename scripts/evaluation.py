@@ -653,8 +653,8 @@ def plot_demeaned_color_relief(gt_dm_array, pred_dm_array, diff_dm_array, out_pa
                       hspace=0.02)
         
         groups = [
-            ("Ground Truth", gt_left, gt_right, dm_cmap, "Elevation (m)", 0, True),
-            ("Predicted", pred_left, pred_right, dm_cmap, "Elevation (m)", 4, True),
+            ("Ground Truth", gt_left, gt_right, dm_cmap, "LiDAR (m)", 0, True),
+            ("Predicted", pred_left, pred_right, dm_cmap, "LiDAR (m)", 4, True),
             ("Error (Pred - GT)", diff_left, diff_right, "seismic", "Error (m)", 8, False),
         ]
 
@@ -711,8 +711,8 @@ def plot_demeaned_color_relief(gt_dm_array, pred_dm_array, diff_dm_array, out_pa
         axes[2].axis("off")
         
         for ax, im, label in [
-            (axes[0], im0, "Elevation (m)"),
-            (axes[1], im1, "Elevation (m)"),
+            (axes[0], im0, "LiDAR (m)"),
+            (axes[1], im1, "LiDAR (m)"),
             (axes[2], im2, "Error (m)")
         ]:
             divider = make_axes_locatable(ax)
@@ -721,7 +721,7 @@ def plot_demeaned_color_relief(gt_dm_array, pred_dm_array, diff_dm_array, out_pa
             cbar.set_label(label, fontsize=10)
             cbar.ax.tick_params(labelsize=8)
 
-            if label == "Elevation (m)":
+            if label == "LiDAR (m)":
                 cbar.set_ticks([-dm_abs, -0.1, -0.01, 0.0, 0.01, 0.1, dm_abs])
                 cbar.formatter = FormatStrFormatter('%.2f')
             else:
@@ -831,8 +831,8 @@ def plot_2d_maps(gt_array, pred_array, diff_array, out_path, auto_orient=True, m
                       hspace=0.02)
         
         groups = [
-            ("Ground Truth", gt_left, gt_right, "terrain", vmin, vmax, "Elevation (m)", 0),
-            ("Prediction", pred_left, pred_right, "terrain", vmin, vmax, "Elevation (m)", 4),
+            ("Ground Truth", gt_left, gt_right, "terrain", vmin, vmax, "LiDAR (m)", 0),
+            ("Prediction", pred_left, pred_right, "terrain", vmin, vmax, "LiDAR (m)", 4),
             ("Error (Pred - GT)", diff_left, diff_right, "seismic", -A, +A, "Error (m)", 8),
         ]
         
@@ -878,8 +878,8 @@ def plot_2d_maps(gt_array, pred_array, diff_array, out_path, auto_orient=True, m
         axes[2].set_title("Error (Pred - GT)", fontsize=12, fontweight='bold')
         axes[2].axis("off")
         
-        for ax, im, label in [(axes[0], im0, "Elevation (m)"), 
-                               (axes[1], im1, "Elevation (m)"), 
+        for ax, im, label in [(axes[0], im0, "LiDAR (m)"), 
+                               (axes[1], im1, "LiDAR (m)"), 
                                (axes[2], im2, "Error (m)")]:
             divider = make_axes_locatable(ax)
             cax = divider.append_axes("bottom", size="5%", pad=0.1)
@@ -1163,7 +1163,7 @@ def plot_region_pdfs(gt_array, pred_array, out_path,
     ymin, ymax = ax.get_ylim()
     ax.set_ylim([ymin, ymax * 1.15])
     
-    ax.set_xlabel("Elevation (m)")
+    ax.set_xlabel("LiDAR (m)")
     ax.set_ylabel("Probability density")
     if title:
         ax.set_title(title)
@@ -1314,7 +1314,7 @@ def plot_region_pdfs_demeaned(pred_tiles_dir, gt_tiles_dir, out_path,
     ymin, ymax = ax.get_ylim()
     ax.set_ylim([ymin, ymax * 1.15])
     
-    ax.set_xlabel("Elevation (m)")
+    ax.set_xlabel("LiDAR (m)")
     ax.set_ylabel("Probability density")
     if title:
         ax.set_title(title)
@@ -1786,7 +1786,7 @@ def main():
             high_pct=99.99,
             smooth_sigma=1.5,
             logy=False,
-            title=f"Elevation Distribution: GT vs Prediction ({region_name})",
+            title=f"LiDAR Distribution: GT vs Prediction ({region_name})",
         )
 
         # De-meaned mosaics (local roughness visualization)
