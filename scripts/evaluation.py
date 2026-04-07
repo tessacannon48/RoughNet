@@ -905,34 +905,69 @@ def _metric_params_from_cfg(cfg):
     return px, jsd_scales, jsd_bins, use_sobel, deg, use_window
 
 
-def _compute_metrics_tensor(gt_t, pr_t, mask_t, px, jsd_scales, jsd_bins, use_sobel, deg, use_window,absrel_eps=0.05):
+def _compute_metrics_tensor(
+    gt_t, pr_t, mask_t,
+    px, jsd_scales, jsd_bins, use_sobel, deg, use_window,
+    absrel_eps=0.05,
+    use_absrel_epsilon=True,
+):
     full_mask = mask_t & torch.isfinite(gt_t) & torch.isfinite(pr_t)
 
     diff = gt_t - pr_t
 
-    # Stabilized AbsRel (physical epsilon)
-    denom = torch.maximum(
-        torch.abs(gt_t),
-        torch.tensor(absrel_eps, dtype=gt_t.dtype, device=gt_t.device)
-    )
+    # Compute GT std (for normalization)
+    gt_masked = torch.masked_select(gt_t, full_mask)
+    gt_std = gt_masked.std(unbiased=False)
 
-    abs_rel = (torch.abs(diff) / denom)[full_mask]
+    # Avoid division by zero
+    if gt_std > 0:
+        nrmse_std = float(rmse_recon(gt_t, pr_t, mask=full_mask).item() / gt_std.item())
+    else:
+        nrmse_std = float("nan")
+
+    if use_absrel_epsilon:
+        denom = torch.maximum(
+            torch.abs(gt_t),
+            torch.tensor(absrel_eps, dtype=gt_t.dtype, device=gt_t.device)
+        )
+        near_zero_mask = (torch.abs(gt_t) < absrel_eps) & full_mask
+        near_zero_fraction = (
+            float(near_zero_mask.float().mean().item()) if full_mask.any() else float("nan")
+        )
+        abs_rel_epsilon_m = float(absrel_eps)
+    else:
+        # No epsilon floor in demeaned space
+        denom = torch.abs(gt_t)
+        abs_rel_epsilon_m = float("nan")
+        near_zero_fraction = float("nan")
+
+    abs_rel_raw = torch.abs(diff) / denom
+    abs_rel = abs_rel_raw[full_mask]
+    abs_rel = abs_rel[torch.isfinite(abs_rel)]
     abs_rel_error = float(abs_rel.mean().item()) if abs_rel.numel() > 0 else float("nan")
-
-    # Diagnostics (VERY useful for paper)
-    near_zero_mask = (torch.abs(gt_t) < absrel_eps) & full_mask
-    near_zero_fraction = float(near_zero_mask.float().mean().item()) if full_mask.any() else float("nan")
 
     return {
         "rmse_phys_m": float(rmse_recon(gt_t, pr_t, mask=full_mask).item()),
         "bias_phys_m": float(bias_recon(gt_t, pr_t, mask=full_mask).item()),
         "sigma_error_pct": float(sigma_error(gt_t, pr_t, mask=full_mask).item()),
-        "normal_angle_error_deg": float(normal_angle_error(gt_t, pr_t, mask=full_mask, pixel_size=px, use_sobel=use_sobel, degrees=deg).item()),
+        "normal_angle_error_deg": float(
+            normal_angle_error(
+                gt_t, pr_t, mask=full_mask,
+                pixel_size=px, use_sobel=use_sobel, degrees=deg
+            ).item()
+        ),
         "zncc": float(zncc(gt_t, pr_t, mask=full_mask).item()),
-        "jsd": float(average_jsd_multiscale(gt_t, pr_t, scales_m=jsd_scales, pixel_size=px, bins=jsd_bins, mask=full_mask).item()),
-        "psd_rmse": float(log_psd_rmse(gt_t, pr_t, pixel_size=px, mask=full_mask, window=use_window).item()),
+        "jsd": float(
+            average_jsd_multiscale(
+                gt_t, pr_t, scales_m=jsd_scales, pixel_size=px, bins=jsd_bins, mask=full_mask
+            ).item()
+        ),
+        "psd_rmse": float(
+            log_psd_rmse(gt_t, pr_t, pixel_size=px, mask=full_mask, window=use_window).item()
+        ),
+        "nrmse_std": nrmse_std,
         "abs_rel_error": abs_rel_error,
-        "abs_rel_epsilon_m": float(absrel_eps),
+        "abs_rel_epsilon_m": abs_rel_epsilon_m,
         "abs_rel_near_zero_fraction": near_zero_fraction,
     }
 
@@ -957,7 +992,8 @@ def compute_and_save_region_metrics(gt_array, pred_array, out_dir, cfg):
     metrics = _compute_metrics_tensor(
         gt_t, pr_t, m_t,
         px, jsd_scales, jsd_bins, use_sobel, deg, use_window,
-        absrel_eps=absrel_eps
+        absrel_eps=absrel_eps,
+        use_absrel_epsilon=True,
     )
 
     gt_masked = torch.masked_select(gt_t, m_t)
@@ -988,41 +1024,6 @@ def compute_and_save_region_metrics(gt_array, pred_array, out_dir, cfg):
         json.dump(region_stats, f, indent=4)
     print(f"Saved region reconstruction stats → {out_json}")
 
-def compute_and_save_region_metrics_demeaned(gt_array, pred_array, out_dir, cfg):
-    stats_dir = os.path.join(out_dir, "reconstruction_statistics")
-    os.makedirs(stats_dir, exist_ok=True)
-
-    mask_np = np.isfinite(gt_array) & np.isfinite(pred_array)
-    if not np.any(mask_np):
-        raise ValueError("No valid pixels found for demeaned metrics.")
-
-    gt_t = torch.from_numpy(gt_array).float()
-    pr_t = torch.from_numpy(pred_array).float()
-    m_t = torch.from_numpy(mask_np).bool()
-
-    px, jsd_scales, jsd_bins, use_sobel, deg, use_window = _metric_params_from_cfg(cfg)
-
-    # IMPORTANT: no need for AbsRel here (not meaningful in demeaned space)
-    metrics = {
-        "rmse_demeaned_m": float(rmse_recon(gt_t, pr_t, mask=m_t).item()),
-        "sigma_error_pct_demeaned": float(sigma_error(gt_t, pr_t, mask=m_t).item()),
-        "normal_angle_error_deg_demeaned": float(
-            normal_angle_error(gt_t, pr_t, mask=m_t, pixel_size=px, use_sobel=use_sobel, degrees=deg).item()
-        ),
-        "zncc_demeaned": float(zncc(gt_t, pr_t, mask=m_t).item()),
-        "jsd_demeaned": float(
-            average_jsd_multiscale(gt_t, pr_t, scales_m=jsd_scales, pixel_size=px, bins=jsd_bins, mask=m_t).item()
-        ),
-        "psd_rmse_demeaned": float(
-            log_psd_rmse(gt_t, pr_t, pixel_size=px, mask=m_t, window=use_window).item()
-        ),
-    }
-
-    out_json = os.path.join(stats_dir, "region_reconstruction_stats_demeaned.json")
-    with open(out_json, "w") as f:
-        json.dump(metrics, f, indent=4)
-
-    print(f"Saved demeaned region stats → {out_json}")
 
 def compute_and_save_patch_metrics(out_dir, cfg):
     stats_dir = os.path.join(out_dir, "reconstruction_statistics")
@@ -1104,7 +1105,8 @@ def compute_and_save_patch_metrics(out_dir, cfg):
         metrics = _compute_metrics_tensor(
             gt_t, pr_t, m_t,
             px, jsd_scales, jsd_bins, use_sobel, deg, use_window,
-            absrel_eps=absrel_eps
+            absrel_eps=absrel_eps,
+            use_absrel_epsilon=True,
         )
 
         gt_masked = torch.masked_select(gt_t, m_t)
@@ -1131,8 +1133,9 @@ def compute_and_save_patch_metrics(out_dir, cfg):
         "rmse_phys_m", "bias_phys_m",
         "sigma_error_pct", "normal_angle_error_deg", "zncc", "jsd", "psd_rmse",
 
-        # AbsRel (NEW)
+        # Relative / normalized metrics
         "abs_rel_error",
+        "nrmse_std",
         "abs_rel_epsilon_m",
         "abs_rel_near_zero_fraction",
 
@@ -1160,8 +1163,11 @@ def compute_and_save_patch_metrics(out_dir, cfg):
         return float(np.average(v[m], weights=w[m]))
 
     weights = [r["valid_pixel_count"] for r in rows]
-    metrics_keys = ["rmse_phys_m", "bias_phys_m", "sigma_error_pct",
-                    "normal_angle_error_deg", "zncc", "jsd", "psd_rmse", "abs_rel_error"]
+    metrics_keys = [
+        "rmse_phys_m", "bias_phys_m", "sigma_error_pct",
+        "normal_angle_error_deg", "zncc", "jsd", "psd_rmse",
+        "abs_rel_error", "nrmse_std"
+    ]
 
     macro_avgs = {k: _nanmean([r[k] for r in rows]) for k in metrics_keys}
     weighted_avgs = {k: _weighted_mean([r[k] for r in rows], weights) for k in metrics_keys}
@@ -1175,6 +1181,138 @@ def compute_and_save_patch_metrics(out_dir, cfg):
     with open(os.path.join(stats_dir, "patch_reconstruction_summary.json"), "w") as f:
         json.dump(summary_json, f, indent=4)
     print("Saved per-patch summary JSON →", os.path.join(stats_dir, "patch_reconstruction_summary.json"))
+
+def compute_and_save_patch_metrics_demeaned(out_dir, cfg):
+    stats_dir = os.path.join(out_dir, "reconstruction_statistics")
+    os.makedirs(stats_dir, exist_ok=True)
+
+    gt_tiles_dir = os.path.join(out_dir, "gt_tiles")
+    pred_tiles_dir = os.path.join(out_dir, "pred_tiles")
+
+    gt_tifs = sorted(glob.glob(os.path.join(gt_tiles_dir, "gt_*.tif")))
+    pred_tifs = sorted(glob.glob(os.path.join(pred_tiles_dir, "pred_*.tif")))
+
+    if len(gt_tifs) == 0 or len(pred_tifs) == 0:
+        raise FileNotFoundError(f"No gt/pred tiles found in {gt_tiles_dir} or {pred_tiles_dir}")
+
+    pred_map = {os.path.basename(p)[len('pred_'):-4]: p for p in pred_tifs}
+    gt_map = {os.path.basename(g)[len('gt_'):-4]: g for g in gt_tifs}
+    common_ids = sorted(set(pred_map.keys()) & set(gt_map.keys()))
+
+    if len(common_ids) == 0:
+        raise ValueError("No matching tile IDs between gt_tiles and pred_tiles")
+
+    px, jsd_scales, jsd_bins, use_sobel, deg, use_window = _metric_params_from_cfg(cfg)
+
+    rows = []
+    for tile_id in tqdm(common_ids, desc="Per-patch demeaned metrics"):
+        gt_fp = gt_map[tile_id]
+        pred_fp = pred_map[tile_id]
+
+        with rasterio.open(gt_fp) as g, rasterio.open(pred_fp) as p:
+            gt = g.read(1).astype(np.float32)
+            pr = p.read(1).astype(np.float32)
+
+            gt = np.where(gt == NODATA, np.nan, gt)
+            pr = np.where(pr == NODATA, np.nan, pr)
+
+            gt = _apply_gt_cleanup(gt)
+            pr = _apply_pred_cleanup(pr)
+
+            valid = np.isfinite(gt) & np.isfinite(pr)
+
+            if not np.any(valid):
+                row = {"tile_id": tile_id, "valid_pixel_count": 0}
+                for k in [
+                    "rmse_demeaned_m", "bias_demeaned_m", "sigma_error_pct_demeaned",
+                    "normal_angle_error_deg_demeaned", "zncc_demeaned", "jsd_demeaned",
+                    "psd_rmse_demeaned", "abs_rel_error_demeaned",
+                    "gt_mean_demeaned_val", "gt_std_demeaned_val",
+                    "pred_mean_demeaned_val", "pred_std_demeaned_val",
+                    "gt_min_demeaned_val", "gt_max_demeaned_val",
+                    "pred_min_demeaned_val", "pred_max_demeaned_val",
+                ]:
+                    row[k] = float("nan")
+                rows.append(row)
+                continue
+
+            gt_mean = float(np.nanmean(gt[valid]))
+            gt_dm = gt - gt_mean
+            pr_dm = pr - gt_mean
+
+            mask_np = np.isfinite(gt_dm) & np.isfinite(pr_dm)
+            gt_t = torch.from_numpy(gt_dm).float()
+            pr_t = torch.from_numpy(pr_dm).float()
+            m_t = torch.from_numpy(mask_np).bool()
+
+            metrics = _compute_metrics_tensor(
+                gt_t, pr_t, m_t,
+                px, jsd_scales, jsd_bins, use_sobel, deg, use_window,
+                absrel_eps=0.05,              # ignored when use_absrel_epsilon=False
+                use_absrel_epsilon=False,     # IMPORTANT: no epsilon in demeaned space
+            )
+
+            gt_masked = torch.masked_select(gt_t, m_t)
+            pr_masked = torch.masked_select(pr_t, m_t)
+
+            row = {
+                "tile_id": tile_id,
+                "valid_pixel_count": int(m_t.sum().item()),
+                "rmse_demeaned_m": metrics["rmse_phys_m"],
+                "bias_demeaned_m": metrics["bias_phys_m"],
+                "sigma_error_pct_demeaned": metrics["sigma_error_pct"],
+                "normal_angle_error_deg_demeaned": metrics["normal_angle_error_deg"],
+                "zncc_demeaned": metrics["zncc"],
+                "jsd_demeaned": metrics["jsd"],
+                "psd_rmse_demeaned": metrics["psd_rmse"],
+                "abs_rel_error_demeaned": metrics["abs_rel_error"],
+                "nrmse_std_demeaned": metrics["nrmse_std"],
+                "gt_mean_demeaned_val": float(gt_masked.mean().item()),
+                "gt_std_demeaned_val": float(gt_masked.std(unbiased=False).item()),
+                "pred_mean_demeaned_val": float(pr_masked.mean().item()),
+                "pred_std_demeaned_val": float(pr_masked.std(unbiased=False).item()),
+                "gt_min_demeaned_val": float(gt_masked.min().item()),
+                "gt_max_demeaned_val": float(gt_masked.max().item()),
+                "pred_min_demeaned_val": float(pr_masked.min().item()),
+                "pred_max_demeaned_val": float(pr_masked.max().item()),
+            }
+            rows.append(row)
+
+    def _nanmean(vals):
+        arr = np.array(vals, dtype=np.float64)
+        return float(np.nanmean(arr)) if arr.size else float("nan")
+
+    def _weighted_mean(vals, weights):
+        v = np.array(vals, dtype=np.float64)
+        w = np.array(weights, dtype=np.float64)
+        m = np.isfinite(v) & (w > 0)
+        if not np.any(m):
+            return float("nan")
+        return float(np.average(v[m], weights=w[m]))
+
+    weights = [r["valid_pixel_count"] for r in rows]
+    metric_keys = [
+        "rmse_demeaned_m", "bias_demeaned_m", "sigma_error_pct_demeaned",
+        "normal_angle_error_deg_demeaned", "zncc_demeaned", "jsd_demeaned",
+        "psd_rmse_demeaned", "abs_rel_error_demeaned","nrmse_std_demeaned",
+    ]
+
+    macro_avgs = {k: _nanmean([r[k] for r in rows]) for k in metric_keys}
+    weighted_avgs = {k: _weighted_mean([r[k] for r in rows], weights) for k in metric_keys}
+
+    summary_json = {
+        "scope": "per_patch_summary_demeaned",
+        "num_patches": len(rows),
+        "macro_average": macro_avgs,
+        "weighted_by_valid_pixel_count": weighted_avgs,
+        "rows": rows,
+    }
+
+    out_json = os.path.join(stats_dir, "patch_reconstruction_summary_demeaned.json")
+    with open(out_json, "w") as f:
+        json.dump(summary_json, f, indent=4)
+
+    print(f"Saved per-patch demeaned summary JSON → {out_json}")
 
 
 def plot_region_pdfs(gt_array, pred_array, out_path,
@@ -1757,7 +1895,7 @@ def main():
 
     if "evaluation" not in config:
         config["evaluation"] = {}
-        config["evaluation"]["absrel_epsilon_m"] = 0.05
+    config["evaluation"]["absrel_epsilon_m"] = 0.05
 
     if args.samplers:
         samplers = [s.strip().lower() for s in args.samplers.split(",") if s.strip()]
@@ -1870,15 +2008,6 @@ def main():
             out_dir=out_dir,
         )
 
-        # Compute demeaned metrics
-        if not args.skip_stats:
-            compute_and_save_region_metrics_demeaned(
-                gt_dm_array,
-                pred_dm_array,
-                out_dir,
-                cfg_used
-            )
-        
         # Plot de-meaned 2D maps with fixed symmetric color scale (professor's approach)
         dm_2d_path = os.path.join(out_dir, f"{region_key}_mosaic_2d_demeaned.png")
         plot_demeaned_color_relief(
@@ -1901,6 +2030,7 @@ def main():
         if not args.skip_stats:
             compute_and_save_region_metrics(gt_array, pred_array, out_dir, cfg_used)
             compute_and_save_patch_metrics(out_dir, cfg_used)
+            compute_and_save_patch_metrics_demeaned(out_dir, cfg_used)
         else:
             print("Skipping reconstruction statistics (--skip-stats).")
 
