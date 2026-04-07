@@ -1,0 +1,305 @@
+{
+  "description": "Compiled patch reconstruction summaries from all 18 model-sampler-region combinations",
+  "models": [
+    "cosine",
+    "linear"
+  ],
+  "regions": [
+    "pondinlet",
+    "tuk",
+    "cambridge"
+  ],
+  "samplers": [
+    "ddpm",
+    "ddim",
+    "plms"
+  ],
+  "results": {
+    "cosine": {
+      "pondinlet": {
+        "ddpm": {
+          "source_path": "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/scripts/../figures/cosine_model/final_val_pondinlet_ddpm/reconstruction_statistics/patch_reconstruction_summary_demeaned.json",
+          "num_patches": 1122,
+          "macro_average": {
+            "rmse_demeaned_m": 0.08882342356982609,
+            "bias_demeaned_m": -0.00031246475017320473,
+            "sigma_error_pct_demeaned": 27.04447220960124,
+            "normal_angle_error_deg_demeaned": 1.7783421535117954,
+            "zncc_demeaned": 0.12183949725646429,
+            "jsd_demeaned": 0.10273119926895886,
+            "psd_rmse_demeaned": 0.8523666659194092,
+            "abs_rel_error_demeaned": 12.246195680423641,
+            "nrmse_std_demeaned": 1.4483469529937967
+          }
+        },
+        "ddim": {
+          "source_path": "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/scripts/../figures/cosine_model/final_val_pondinlet_ddim/reconstruction_statistics/patch_reconstruction_summary_demeaned.json",
+          "num_patches": 1122,
+          "macro_average": {
+            "rmse_demeaned_m": 0.08505690647969803,
+            "bias_demeaned_m": -0.00047237086958897614,
+            "sigma_error_pct_demeaned": 20.823772721771157,
+            "normal_angle_error_deg_demeaned": 1.711462737085985,
+            "zncc_demeaned": 0.13354934527509899,
+            "jsd_demeaned": 0.0919273054063712,
+            "psd_rmse_demeaned": 0.8600105871969366,
+            "abs_rel_error_demeaned": 12.160965284561728,
+            "nrmse_std_demeaned": 1.3775231054885855
+          }
+        },
+        "plms": {
+          "source_path": "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/scripts/../figures/cosine_model/final_val_pondinlet_plms/reconstruction_statistics/patch_reconstruction_summary_demeaned.json",
+          "num_patches": 1122,
+          "macro_average": {
+            "rmse_demeaned_m": 0.07253031371536527,
+            "bias_demeaned_m": -0.0009721496430165076,
+            "sigma_error_pct_demeaned": 24.28111129261905,
+            "normal_angle_error_deg_demeaned": 1.411260395976524,
+            "zncc_demeaned": 0.18835167643830214,
+            "jsd_demeaned": 0.09572250789210679,
+            "psd_rmse_demeaned": 0.9849798481200893,
+            "abs_rel_error_demeaned": 8.547383880445238,
+            "nrmse_std_demeaned": 1.1408290113258936
+          }
+        }
+      },
+      "tuk": {
+        "ddpm": {
+          "source_path": "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/scripts/../figures/cosine_model/final_val_tuk_ddpm/reconstruction_statistics/patch_reconstruction_summary_demeaned.json",
+          "num_patches": 168,
+          "macro_average": {
+            "rmse_demeaned_m": 0.12153210923341769,
+            "bias_demeaned_m": -0.0029981022230999984,
+            "sigma_error_pct_demeaned": 8.857707233534061,
+            "normal_angle_error_deg_demeaned": 1.8831823468208313,
+            "zncc_demeaned": 0.6683129582642799,
+            "jsd_demeaned": 0.05050545978537273,
+            "psd_rmse_demeaned": 0.6602199090023836,
+            "abs_rel_error_demeaned": 5.360145693023999,
+            "nrmse_std_demeaned": 0.8148731715026558
+          }
+        },
+        "ddim": {
+          "source_path": "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/scripts/../figures/cosine_model/final_val_tuk_ddim/reconstruction_statistics/patch_reconstruction_summary_demeaned.json",
+          "num_patches": 168,
+          "macro_average": {
+            "rmse_demeaned_m": 0.1195991214231721,
+            "bias_demeaned_m": -0.002597197421112339,
+            "sigma_error_pct_demeaned": 7.868947218748785,
+            "normal_angle_error_deg_demeaned": 1.8544901815198718,
+            "zncc_demeaned": 0.6750079704936416,
+            "jsd_demeaned": 0.04698485483614994,
+            "psd_rmse_demeaned": 0.6655706770363308,
+            "abs_rel_error_demeaned": 5.304840539182935,
+            "nrmse_std_demeaned": 0.7966473096921776
+          }
+        },
+        "plms": {
+          "source_path": "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/scripts/../figures/cosine_model/final_val_tuk_plms/reconstruction_statistics/patch_reconstruction_summary_demeaned.json",
+          "num_patches": 168,
+          "macro_average": {
+            "rmse_demeaned_m": 0.10228039441807639,
+            "bias_demeaned_m": -0.0031139631015927685,
+            "sigma_error_pct_demeaned": 10.2075983011829,
+            "normal_angle_error_deg_demeaned": 1.5610869831982113,
+            "zncc_demeaned": 0.7462804390206224,
+            "jsd_demeaned": 0.05377719875070311,
+            "psd_rmse_demeaned": 0.8470227565793764,
+            "abs_rel_error_demeaned": 4.442375858624776,
+            "nrmse_std_demeaned": 0.6780487397381614
+          }
+        }
+      },
+      "cambridge": {
+        "ddpm": {
+          "source_path": "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/scripts/../figures/cosine_model/final_test_cambridge_ddpm/reconstruction_statistics/patch_reconstruction_summary_demeaned.json",
+          "num_patches": 2111,
+          "macro_average": {
+            "rmse_demeaned_m": 0.12888209417829408,
+            "bias_demeaned_m": 0.0008533219359845805,
+            "sigma_error_pct_demeaned": 76.51238626004508,
+            "normal_angle_error_deg_demeaned": 1.8349061502996975,
+            "zncc_demeaned": 0.002044012259015486,
+            "jsd_demeaned": 0.1295990206297683,
+            "psd_rmse_demeaned": 1.3289323241464452,
+            "abs_rel_error_demeaned": 11.728959844553996,
+            "nrmse_std_demeaned": 2.00968440600475
+          }
+        },
+        "ddim": {
+          "source_path": "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/scripts/../figures/cosine_model/final_test_cambridge_ddim/reconstruction_statistics/patch_reconstruction_summary_demeaned.json",
+          "num_patches": 2111,
+          "macro_average": {
+            "rmse_demeaned_m": 0.10903100864913214,
+            "bias_demeaned_m": 5.065706790017383e-05,
+            "sigma_error_pct_demeaned": 38.83413951724319,
+            "normal_angle_error_deg_demeaned": 1.6473586874118862,
+            "zncc_demeaned": 0.05267580422132002,
+            "jsd_demeaned": 0.07337324056696731,
+            "psd_rmse_demeaned": 1.2597393544010504,
+            "abs_rel_error_demeaned": 9.108334911315715,
+            "nrmse_std_demeaned": 1.631310005603079
+          }
+        },
+        "plms": {
+          "source_path": "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/scripts/../figures/cosine_model/final_test_cambridge_plms/reconstruction_statistics/patch_reconstruction_summary_demeaned.json",
+          "num_patches": 2111,
+          "macro_average": {
+            "rmse_demeaned_m": 0.08929611073850117,
+            "bias_demeaned_m": -0.0008983140050016899,
+            "sigma_error_pct_demeaned": 18.357358513807604,
+            "normal_angle_error_deg_demeaned": 1.1703133832950945,
+            "zncc_demeaned": 0.11288861566606745,
+            "jsd_demeaned": 0.08102151178077661,
+            "psd_rmse_demeaned": 1.0730054995308889,
+            "abs_rel_error_demeaned": 6.02792407109917,
+            "nrmse_std_demeaned": 1.2461579664181681
+          }
+        }
+      }
+    },
+    "linear": {
+      "pondinlet": {
+        "ddpm": {
+          "source_path": "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/scripts/../figures/linear_model/final_val_pondinlet_ddpm/reconstruction_statistics/patch_reconstruction_summary_demeaned.json",
+          "num_patches": 1122,
+          "macro_average": {
+            "rmse_demeaned_m": 0.08209711732591855,
+            "bias_demeaned_m": -0.002845545577047022,
+            "sigma_error_pct_demeaned": 24.579606340520762,
+            "normal_angle_error_deg_demeaned": 1.4673693804817403,
+            "zncc_demeaned": 0.09388276295343297,
+            "jsd_demeaned": 0.1173917985373507,
+            "psd_rmse_demeaned": 1.9842058605051296,
+            "abs_rel_error_demeaned": 11.121986958591696,
+            "nrmse_std_demeaned": 1.3123007369246686
+          }
+        },
+        "ddim": {
+          "source_path": "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/scripts/../figures/linear_model/final_val_pondinlet_ddim/reconstruction_statistics/patch_reconstruction_summary_demeaned.json",
+          "num_patches": 1122,
+          "macro_average": {
+            "rmse_demeaned_m": 0.078211749297917,
+            "bias_demeaned_m": -0.0028305619517999593,
+            "sigma_error_pct_demeaned": 21.329663628298928,
+            "normal_angle_error_deg_demeaned": 1.4707617355965463,
+            "zncc_demeaned": 0.12272630955122102,
+            "jsd_demeaned": 0.10096450490916875,
+            "psd_rmse_demeaned": 1.968845767027129,
+            "abs_rel_error_demeaned": 10.11867034148405,
+            "nrmse_std_demeaned": 1.2439113268605335
+          }
+        },
+        "plms": {
+          "source_path": "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/scripts/../figures/linear_model/final_val_pondinlet_plms/reconstruction_statistics/patch_reconstruction_summary_demeaned.json",
+          "num_patches": 1122,
+          "macro_average": {
+            "rmse_demeaned_m": 0.07000218621005243,
+            "bias_demeaned_m": -0.002884041247437992,
+            "sigma_error_pct_demeaned": 35.249304898787095,
+            "normal_angle_error_deg_demeaned": 1.3139011204348954,
+            "zncc_demeaned": 0.17573132963789914,
+            "jsd_demeaned": 0.11919104221813155,
+            "psd_rmse_demeaned": 2.1316104170047874,
+            "abs_rel_error_demeaned": 7.540978584060057,
+            "nrmse_std_demeaned": 1.0920907793310817
+          }
+        }
+      },
+      "tuk": {
+        "ddpm": {
+          "source_path": "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/scripts/../figures/linear_model/final_val_tuk_ddpm/reconstruction_statistics/patch_reconstruction_summary_demeaned.json",
+          "num_patches": 168,
+          "macro_average": {
+            "rmse_demeaned_m": 0.11855198429631335,
+            "bias_demeaned_m": -0.004063398975371716,
+            "sigma_error_pct_demeaned": 16.22915030643344,
+            "normal_angle_error_deg_demeaned": 1.787429496291138,
+            "zncc_demeaned": 0.653574838524773,
+            "jsd_demeaned": 0.06712908654784162,
+            "psd_rmse_demeaned": 1.3874467990937687,
+            "abs_rel_error_demeaned": 4.919482061550731,
+            "nrmse_std_demeaned": 0.7868066860642674
+          }
+        },
+        "ddim": {
+          "source_path": "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/scripts/../figures/linear_model/final_val_tuk_ddim/reconstruction_statistics/patch_reconstruction_summary_demeaned.json",
+          "num_patches": 168,
+          "macro_average": {
+            "rmse_demeaned_m": 0.11587421642616391,
+            "bias_demeaned_m": -0.004288165083986921,
+            "sigma_error_pct_demeaned": 14.999882124275679,
+            "normal_angle_error_deg_demeaned": 1.7808176350025904,
+            "zncc_demeaned": 0.6701171897972623,
+            "jsd_demeaned": 0.060410074257690995,
+            "psd_rmse_demeaned": 1.4036393694224811,
+            "abs_rel_error_demeaned": 4.7773118161019825,
+            "nrmse_std_demeaned": 0.7713470650064906
+          }
+        },
+        "plms": {
+          "source_path": "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/scripts/../figures/linear_model/final_val_tuk_plms/reconstruction_statistics/patch_reconstruction_summary_demeaned.json",
+          "num_patches": 168,
+          "macro_average": {
+            "rmse_demeaned_m": 0.10248356829175637,
+            "bias_demeaned_m": -0.004729981897807669,
+            "sigma_error_pct_demeaned": 18.425330552849033,
+            "normal_angle_error_deg_demeaned": 1.5414419717022352,
+            "zncc_demeaned": 0.7398287905823617,
+            "jsd_demeaned": 0.06670263347526391,
+            "psd_rmse_demeaned": 1.627026500446456,
+            "abs_rel_error_demeaned": 4.143027052992866,
+            "nrmse_std_demeaned": 0.6764905927188567
+          }
+        }
+      },
+      "cambridge": {
+        "ddpm": {
+          "source_path": "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/scripts/../figures/linear_model/final_test_cambridge_ddpm/reconstruction_statistics/patch_reconstruction_summary_demeaned.json",
+          "num_patches": 2111,
+          "macro_average": {
+            "rmse_demeaned_m": 0.10170952175280201,
+            "bias_demeaned_m": -0.0027646785951820946,
+            "sigma_error_pct_demeaned": 35.6171196487078,
+            "normal_angle_error_deg_demeaned": 1.3345270837612595,
+            "zncc_demeaned": 0.05099383591413657,
+            "jsd_demeaned": 0.11746419827162174,
+            "psd_rmse_demeaned": 0.8764458789270899,
+            "abs_rel_error_demeaned": 7.766139191058731,
+            "nrmse_std_demeaned": 1.494728819184542
+          }
+        },
+        "ddim": {
+          "source_path": "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/scripts/../figures/linear_model/final_test_cambridge_ddim/reconstruction_statistics/patch_reconstruction_summary_demeaned.json",
+          "num_patches": 2111,
+          "macro_average": {
+            "rmse_demeaned_m": 0.09442382806330595,
+            "bias_demeaned_m": -0.0027231558242648193,
+            "sigma_error_pct_demeaned": 25.47752475607518,
+            "normal_angle_error_deg_demeaned": 1.3078348149004169,
+            "zncc_demeaned": 0.0983640265485937,
+            "jsd_demeaned": 0.10200727046725452,
+            "psd_rmse_demeaned": 0.8657791550720771,
+            "abs_rel_error_demeaned": 6.9251998217396125,
+            "nrmse_std_demeaned": 1.3576272066480193
+          }
+        },
+        "plms": {
+          "source_path": "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/scripts/../figures/linear_model/final_test_cambridge_plms/reconstruction_statistics/patch_reconstruction_summary_demeaned.json",
+          "num_patches": 2111,
+          "macro_average": {
+            "rmse_demeaned_m": 0.08325945024260804,
+            "bias_demeaned_m": -0.0028439815684514875,
+            "sigma_error_pct_demeaned": 30.133695572328786,
+            "normal_angle_error_deg_demeaned": 1.0602385432219856,
+            "zncc_demeaned": 0.1683748011788431,
+            "jsd_demeaned": 0.1250020471480483,
+            "psd_rmse_demeaned": 0.9277130995723999,
+            "abs_rel_error_demeaned": 5.188471367945326,
+            "nrmse_std_demeaned": 1.1417316885876876
+          }
+        }
+      }
+    }
+  }
+}

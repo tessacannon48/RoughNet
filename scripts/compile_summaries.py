@@ -25,7 +25,7 @@ def main():
             prefix = 'final_val' if region in ('pondinlet', 'tuk') else 'final_test'
             for sampler in samplers:
                 folder = os.path.join(base, f'{model}_model', f'{prefix}_{region}_{sampler}', 'reconstruction_statistics')
-                json_path = os.path.join(folder, 'patch_reconstruction_summary.json')
+                json_path = os.path.join(folder, 'patch_reconstruction_summary_demeaned.json')
                 if os.path.exists(json_path):
                     with open(json_path, 'r') as f:
                         data = json.load(f)
@@ -33,7 +33,7 @@ def main():
                         'source_path': json_path,
                         'num_patches': data.get('num_patches'),
                         'macro_average': data.get('macro_average'),
-                        'weighted_by_valid_pixel_count': data.get('weighted_by_valid_pixel_count')
+                        #'weighted_by_valid_pixel_count': data.get('weighted_by_valid_pixel_count')
                     }
                     print(f'Loaded: {json_path}')
                 else:
@@ -42,7 +42,7 @@ def main():
 
     out_dir = os.path.join(base, 'ablation_comparison')
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, 'compiled_patch_summaries.json')
+    out_path = os.path.join(out_dir, 'compiled_patch_summaries_demeaned.json')
     with open(out_path, 'w') as f:
         json.dump(compiled, f, indent=2)
     print(f'\nCompiled file saved to: {out_path}')
