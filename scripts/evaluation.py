@@ -571,69 +571,46 @@ def plot_demeaned_color_relief(gt_dm_array, pred_dm_array, diff_dm_array, out_pa
 
     Ground truth and prediction are shown in residual space with a shared symmetric
     log normalization. Error is shown as Pred - GT with a fixed linear scale.
-    
-    Args:
-        gt_dm_array: Demeaned ground truth array
-        pred_dm_array: Demeaned prediction array  
-        diff_dm_array: Demeaned difference array (pred - gt)
-        out_path: Output PNG file path
-        vmin, vmax: Fixed color scale bounds (default -0.5 to +0.5m)
-        manual_rotation: Optional manual rotation angle in degrees
-        split_stack: If True, split wide regions horizontally for easier viewing
     """
     gt_dm_array = gt_dm_array.astype(np.float32)
     pred_dm_array = pred_dm_array.astype(np.float32)
     diff_dm_array = diff_dm_array.astype(np.float32)
     
-    # Create combined valid mask for rotation
     valid_mask = np.isfinite(gt_dm_array) & np.isfinite(pred_dm_array)
     
     if manual_rotation is not None:
-        # Apply manual rotation
         angle = manual_rotation
         print(f"  Manual rotation: {angle:.1f} degrees")
         
-        # Rotate all arrays
         gt_rot = _rotate_and_crop(gt_dm_array, angle)
         pred_rot = _rotate_and_crop(pred_dm_array, angle)
         diff_rot = _rotate_and_crop(diff_dm_array, angle)
         
-        # Compute new valid mask and crop
         valid_rot = np.isfinite(gt_rot) & np.isfinite(pred_rot)
-        gt_dm_array, bbox = _crop_to_valid(gt_rot, valid_rot, padding=20)
+        gt_dm_array, _ = _crop_to_valid(gt_rot, valid_rot, padding=20)
         pred_dm_array, _ = _crop_to_valid(pred_rot, valid_rot, padding=20)
         diff_dm_array, _ = _crop_to_valid(diff_rot, valid_rot, padding=20)
     else:
-        # Just crop without rotation
-        gt_dm_array, bbox = _crop_to_valid(gt_dm_array, valid_mask, padding=20)
+        gt_dm_array, _ = _crop_to_valid(gt_dm_array, valid_mask, padding=20)
         pred_dm_array, _ = _crop_to_valid(pred_dm_array, valid_mask, padding=20)
         diff_dm_array, _ = _crop_to_valid(diff_dm_array, valid_mask, padding=20)
     
-    # Use symmetric log normalization so values near zero are visually emphasized.
     dm_abs = float(max(abs(vmin), abs(vmax), 1e-6))
-    dm_vmin, dm_vmax = -dm_abs, dm_abs
     linthresh_dm = 0.1
     dm_norm = mcolors.SymLogNorm(
         linthresh=linthresh_dm,
         linscale=1.0,
-        vmin=dm_vmin,
-        vmax=dm_vmax,
+        vmin=-dm_abs,
+        vmax=dm_abs,
     )
     dm_cmap = "RdBu_r"
 
-    print(
-        f"  Visualizing demeaned mosaics with symlog scale: "
-        f"{dm_vmin:.2f}m to {dm_vmax:.2f}m (linthresh={linthresh_dm:.4f})"
-    )
-    
-    # Compute aspect ratio
     h, w = gt_dm_array.shape
     aspect = w / h
     
     from mpl_toolkits.axes_grid1 import make_axes_locatable
     
     if split_stack:
-        # Split wide regions horizontally
         mid = w // 2
         gt_left, gt_right = gt_dm_array[:, :mid], gt_dm_array[:, mid:]
         pred_left, pred_right = pred_dm_array[:, :mid], pred_dm_array[:, mid:]
@@ -663,7 +640,7 @@ def plot_demeaned_color_relief(gt_dm_array, pred_dm_array, diff_dm_array, out_pa
             ax_bot = fig.add_subplot(gs[row_start + 1])
             cax = fig.add_subplot(gs[row_start + 2])
 
-            ax_top.set_title(title, fontsize=12, fontweight='bold', pad=10)
+            ax_top.set_title(title, fontsize=20, fontweight='bold', pad=10)
 
             if use_symlog:
                 im_top = ax_top.imshow(left_data, cmap=cmap, norm=dm_norm, aspect='equal')
@@ -676,19 +653,19 @@ def plot_demeaned_color_relief(gt_dm_array, pred_dm_array, diff_dm_array, out_pa
             ax_bot.axis("off")
             
             cbar = fig.colorbar(im_top, cax=cax, orientation="horizontal")
-            cbar.set_label(label, fontsize=10)
-            cbar.ax.tick_params(labelsize=8)
+            cbar.set_label(label, fontsize=15)
+            cbar.ax.tick_params(labelsize=12)
 
             if use_symlog:
-                cbar.set_ticks([-dm_abs, -0.1, -0.01, 0.0, 0.01, 0.1, dm_abs])
+                cbar.set_ticks([-dm_abs, -0.1, 0.0, 0.1, dm_abs])  # removed ±0.01
                 cbar.formatter = FormatStrFormatter('%.2f')
             else:
                 cbar.set_ticks([-dm_abs, -0.1, 0.0, 0.1, dm_abs])
                 cbar.formatter = FormatStrFormatter('%.2f')
 
             cbar.update_ticks()
+
     else:
-        # Standard 3-row layout
         if aspect >= 1:
             fig_width = min(14, max(8, aspect * 4))
             fig_height = fig_width / aspect * 3 + 2
@@ -699,15 +676,15 @@ def plot_demeaned_color_relief(gt_dm_array, pred_dm_array, diff_dm_array, out_pa
         fig, axes = plt.subplots(3, 1, figsize=(fig_width, fig_height))
 
         im0 = axes[0].imshow(gt_dm_array, cmap=dm_cmap, norm=dm_norm, aspect='equal')
-        axes[0].set_title("Ground Truth", fontsize=12, fontweight='bold')
+        axes[0].set_title("Ground Truth", fontsize=22, fontweight='bold')
         axes[0].axis("off")
 
         im1 = axes[1].imshow(pred_dm_array, cmap=dm_cmap, norm=dm_norm, aspect='equal')
-        axes[1].set_title("Prediction", fontsize=12, fontweight='bold')
+        axes[1].set_title("Predicted", fontsize=22, fontweight='bold')
         axes[1].axis("off")
 
         im2 = axes[2].imshow(diff_dm_array, cmap="seismic", vmin=-dm_abs, vmax=+dm_abs, aspect='equal')
-        axes[2].set_title("Error (Pred - GT)", fontsize=12, fontweight='bold')
+        axes[2].set_title("Error (Pred - GT)", fontsize=22, fontweight='bold')
         axes[2].axis("off")
         
         for ax, im, label in [
@@ -718,11 +695,11 @@ def plot_demeaned_color_relief(gt_dm_array, pred_dm_array, diff_dm_array, out_pa
             divider = make_axes_locatable(ax)
             cax = divider.append_axes("bottom", size="5%", pad=0.1)
             cbar = fig.colorbar(im, cax=cax, orientation="horizontal")
-            cbar.set_label(label, fontsize=10)
-            cbar.ax.tick_params(labelsize=8)
+            cbar.set_label(label, fontsize=18)
+            cbar.ax.tick_params(labelsize=15)
 
             if label == "LiDAR (m)":
-                cbar.set_ticks([-dm_abs, -0.1, -0.01, 0.0, 0.01, 0.1, dm_abs])
+                cbar.set_ticks([-dm_abs, -0.1, 0.0, 0.1, dm_abs])  # removed ±0.01
                 cbar.formatter = FormatStrFormatter('%.2f')
             else:
                 cbar.set_ticks([-dm_abs, -0.1, 0.0, 0.1, dm_abs])
@@ -730,8 +707,9 @@ def plot_demeaned_color_relief(gt_dm_array, pred_dm_array, diff_dm_array, out_pa
 
             cbar.update_ticks()
 
-    if not split_stack:
-        plt.tight_layout()
+    #if not split_stack:
+        #plt.tight_layout()
+    fig.subplots_adjust(top=0.96, bottom=0.04)
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     fig.savefig(out_path, dpi=300, bbox_inches="tight", facecolor='white')
     plt.close(fig)
@@ -842,18 +820,18 @@ def plot_2d_maps(gt_array, pred_array, diff_array, out_path, auto_orient=True, m
             cax = fig.add_subplot(gs[row_start + 2])
             
             # Title only on top image with padding
-            ax_top.set_title(title, fontsize=12, fontweight='bold', pad=10)
+            ax_top.set_title(title, fontsize=16, fontweight='bold', pad=10)
             
-            im_top = ax_top.imshow(left_data, cmap=cmap, vmin=v0, vmax=v1, aspect='equal')
-            im_bot = ax_bot.imshow(right_data, cmap=cmap, vmin=v0, vmax=v1, aspect='equal')
+            im_top = ax_top.imshow(left_data, cmap=cmap, vmin=v0, vmax=v1, aspect='auto')
+            im_bot = ax_bot.imshow(right_data, cmap=cmap, vmin=v0, vmax=v1, aspect='auto')
             
             ax_top.axis("off")
             ax_bot.axis("off")
             
             # Shared colorbar below both halves
             cbar = fig.colorbar(im_top, cax=cax, orientation="horizontal")
-            cbar.set_label(label, fontsize=10)
-            cbar.ax.tick_params(labelsize=8)
+            cbar.set_label(label, fontsize=12)
+            cbar.ax.tick_params(labelsize=10)
     else:
         # Standard 3-row layout
         # Dynamically size figure based on data aspect ratio
@@ -866,16 +844,16 @@ def plot_2d_maps(gt_array, pred_array, diff_array, out_path, auto_orient=True, m
         
         fig, axes = plt.subplots(3, 1, figsize=(fig_width, fig_height))
 
-        im0 = axes[0].imshow(gt_array, cmap="terrain", vmin=vmin, vmax=vmax, aspect='equal')
-        axes[0].set_title("Ground Truth", fontsize=12, fontweight='bold')
+        im0 = axes[0].imshow(gt_array, cmap="terrain", vmin=vmin, vmax=vmax, aspect='auto')
+        axes[0].set_title("Ground Truth", fontsize=16, fontweight='bold')
         axes[0].axis("off")
 
-        im1 = axes[1].imshow(pred_array, cmap="terrain", vmin=vmin, vmax=vmax, aspect='equal')
-        axes[1].set_title("Prediction", fontsize=12, fontweight='bold')
+        im1 = axes[1].imshow(pred_array, cmap="terrain", vmin=vmin, vmax=vmax, aspect='auto')
+        axes[1].set_title("Prediction", fontsize=16, fontweight='bold')
         axes[1].axis("off")
 
-        im2 = axes[2].imshow(diff_array, cmap="seismic", vmin=-A, vmax=+A, aspect='equal')
-        axes[2].set_title("Error (Pred - GT)", fontsize=12, fontweight='bold')
+        im2 = axes[2].imshow(diff_array, cmap="seismic", vmin=-A, vmax=+A, aspect='auto')
+        axes[2].set_title("Error (Pred - GT)", fontsize=16, fontweight='bold')
         axes[2].axis("off")
         
         for ax, im, label in [(axes[0], im0, "LiDAR (m)"), 
@@ -884,8 +862,8 @@ def plot_2d_maps(gt_array, pred_array, diff_array, out_path, auto_orient=True, m
             divider = make_axes_locatable(ax)
             cax = divider.append_axes("bottom", size="5%", pad=0.1)
             cbar = fig.colorbar(im, cax=cax, orientation="horizontal")
-            cbar.set_label(label, fontsize=10)
-            cbar.ax.tick_params(labelsize=8)
+            cbar.set_label(label, fontsize=16)
+            cbar.ax.tick_params(labelsize=14)
 
     if not split_stack:
         plt.tight_layout()
@@ -1381,7 +1359,7 @@ def plot_region_pdfs(gt_array, pred_array, out_path,
 
     if np.isfinite(jsd):
         ax.text(0.02, 0.98, f"JSD = {jsd:.4f}", transform=ax.transAxes,
-                ha="left", va="top", fontsize=11,
+                ha="left", va="top", fontsize=13,
                 bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"))
 
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
@@ -1532,7 +1510,7 @@ def plot_region_pdfs_demeaned(pred_tiles_dir, gt_tiles_dir, out_path,
 
     if np.isfinite(jsd):
         ax.text(0.02, 0.98, f"JSD = {jsd:.4f}", transform=ax.transAxes,
-                ha="left", va="top", fontsize=11,
+                ha="left", va="top", fontsize=13,
                 bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"))
 
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
