@@ -6,11 +6,11 @@
 
 ### Goal
 
-This research develops a custom conditional diffusion model to super-resolve satellite imagery of Arctic landfast ice into high-resolution digital elevation maps (DEMs). Specifically, the model learns a mapping from 10-m Sentinel-2 images to 1-m DEMs, corresponding to a 100× increase in spatial resolution.
+This research develops a custom conditional diffusion model to super-resolve satellite imagery of Arctic landfast ice into high-resolution topographic maps. Specifically, the model learns a mapping from 10-m Sentinel-2 images to 1-m locally normalized DEMs, corresponding to a 100× increase in spatial resolution.
 
 ### Motivation
 
-The motivation of this study is to enable safer navigation across landfast ice for Indigenous communities in the Arctic. Through the generation of high-resolution DEMs derived from LiDAR, this work seeks to provide accurate representations of sea-ice surface roughness (SIR), which is a key indicator of ice safety.
+The motivation of this study is to enable safer navigation across landfast ice for Indigenous communities in the Arctic. Through the generation of high-resolution topography derived from LiDAR, this work seeks to provide accurate representations of sea-ice surface roughness (SIR), which is a key indicator of ice safety.
   
 ### Repository Structure
 
@@ -74,7 +74,7 @@ The multispectral satellite imagery used in this study is obtained from the Euro
 
 5. Transformations
 - Script: `/Dissertation/scripts/main.py` 
-- The dataset class used to create the input dataset applies several selections and transformations to adequately prepare the data for modeling. First, each Sentinel-2 patch is resized to the dimensions of the LiDAR patch (256x256 pixels) using bilinear interpolation. Sentinel-2 data is normalized on a per-patch basis: for each band (R,G,B,NIR), all Sentinel-2 products are pooled, clipped to 2nd-98th percentiles, and linearly rescaled to [0,1] with a minimum range safeguard of 1e-3. The LiDAR data is not transformed as the values are already centered around zero from the RANSAC calculation. The training set is then randomly augmented to increase the variety of the training samples and improve the model’s robustness. Finally, the attributes are parsed for each Sentinel-2 patch and encoded in the following manner: cloud coverage percentage is scaled to be [0,1], the age of the image is calculated as a positive or negative scalar value which represents the time difference between the Sentinel-2 and LiDAR acquisition, the Zenith angles are scaled to be [0,1], and the Azimuth angles are transformed into two features: the cosine and sine of the original angle, using sinusoidal encoding. The difference in angle encoding is due to the fact that Zenith angles lie in a range of 0$\degree$ to 90$\degree$, representing the vertical angle between an object and a line pointing straight up from the ground, while the Azimuth angles lie in a range of 0$\degree$ to 360$\degree$, representing the horizontal angle measured clockwise from True North.
+- The dataset class used to create the input dataset applies several selections and transformations to adequately prepare the data for modeling. First, each Sentinel-2 patch is resized to the dimensions of the LiDAR patch (256×256 pixels) using bilinear interpolation. Sentinel-2 data is normalized on a per-patch basis: for each band (R, G, B, NIR), all Sentinel-2 products are pooled, clipped to the 2nd--98th percentiles, and linearly rescaled to [0,1] with a minimum range safeguard of \(1\times10^{-3}\). The LiDAR input consists of RANSAC residual elevations, which are further processed using patch-wise mean removal computed only over valid pixels. Specifically, the mean residual elevation of each patch is subtracted from all valid pixels so that the model learns local roughness structure rather than absolute elevation offsets, while invalid pixels are masked to zero. The training set is then randomly augmented to increase sample diversity and improve model robustness. Finally, the attributes are parsed for each Sentinel-2 patch and encoded as follows: cloud coverage percentage is scaled to [0,1], image age is represented as a signed scalar corresponding to the temporal difference between Sentinel-2 and LiDAR acquisition dates (scaled approximately in months), Zenith angles are scaled to [0,1], and Azimuth angles are transformed into sine and cosine components using sinusoidal encoding. The difference in angle encoding arises because Zenith angles lie in a range of \(0^\circ\) to \(90^\circ\), representing the vertical angle between an object and a line pointing upward from the ground, whereas Azimuth angles lie in a range of \(0^\circ\) to \(360^\circ\), representing the horizontal angle measured clockwise from True North.
 
 ---
 
@@ -220,7 +220,7 @@ python Dissertation/scripts/main.py --context_k 1 --attention_variant mid --samp
 
 ### Evaluation
 
-The `evaluation.py` script performs **region-wide inference**, **mosaicking**, **figure generation** (2D composites, 3D surfaces, PDFs), and **metric computation** (per-patch and region-level).
+The `evaluation.py` script performs **region-wide inference**, **mosaicking**, **figure generation** (demeaned 2D mosaics and PDFs), and **metric computation** (per-patch and region-level).
 
 Each evaluation run is configured by selecting a **region preset** using the `--region` argument.  
 All file paths (Sentinel-2 patches, LiDAR patches, model checkpoint, output directory) and any region filtering (e.g., `zone_ids=[4]` for Pond Inlet) are handled automatically through the preset system.
