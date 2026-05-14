@@ -276,7 +276,10 @@ def build_averaged_mosaic(tif_list, out_path, compress=None, nodata=NODATA):
             weights = np.where(valid, weights, 0)
             
             # Find where this tile maps in output
+            # Get tile bounds
             tile_bounds = src.bounds
+            
+            # Compute pixel coordinates in output
             col_off = int(np.round((tile_bounds.left - dst_w) / res_x))
             row_off = int(np.round((dst_n - tile_bounds.top) / res_y))
             
@@ -291,11 +294,14 @@ def build_averaged_mosaic(tif_list, out_path, compress=None, nodata=NODATA):
             dst_row_end = min(out_height, row_off + data.shape[0])
             dst_col_end = min(out_width, col_off + data.shape[1])
             
-            # Extract regions and accumulate
+            # Extract regions
             src_data = data[src_row_start:src_row_end, src_col_start:src_col_end]
             src_weights = weights[src_row_start:src_row_end, src_col_start:src_col_end]
+            
+            # Replace NaN with 0 for accumulation (weights will be 0 there)
             src_data_clean = np.where(np.isfinite(src_data), src_data, 0)
             
+            # Accumulate
             weighted_sum[dst_row_start:dst_row_end, dst_col_start:dst_col_end] += src_data_clean * src_weights
             weight_sum[dst_row_start:dst_row_end, dst_col_start:dst_col_end] += src_weights
         
@@ -459,7 +465,104 @@ def build_demeaned_mosaics(pred_tiles_dir, gt_tiles_dir, out_dir):
     return pred_dm_mosaic, gt_dm_mosaic, gt_array, pred_array, diff_array
 
 
+def _compute_optimal_rotation(mask):
+    """Compute optimal rotation angle to make the longest edge of the region horizontal."""
+    from scipy.spatial import ConvexHull
+    
+    # Get coordinates of valid pixels
+    ys, xs = np.where(mask)
+    if len(xs) < 10:
+        return 0.0
+    
+    # Subsample for efficiency if too many points
+    if len(xs) > 5000:
+        idx = np.random.choice(len(xs), 5000, replace=False)
+        xs, ys = xs[idx], ys[idx]
+    
+    points = np.column_stack([xs, ys])
+    
+    try:
+        hull = ConvexHull(points)
+        hull_points = points[hull.vertices]
+    except:
+        # Fall back to all points if convex hull fails
+        hull_points = points
+    
+    # Find minimum area bounding rectangle using rotating calipers approach
+    # Test angles based on hull edges
+    best_angle = 0.0
+    best_aspect = 0.0  # width / height ratio
+    
+    n = len(hull_points)
+    for i in range(n):
+        # Get edge vector
+        p1 = hull_points[i]
+        p2 = hull_points[(i + 1) % n]
+        edge = p2 - p1
+        
+        # Angle of this edge
+        edge_angle = np.degrees(np.arctan2(edge[1], edge[0]))
+        
+        # Rotate all points by negative of this angle
+        rad = np.radians(-edge_angle)
+        cos_a, sin_a = np.cos(rad), np.sin(rad)
+        rotated = np.column_stack([
+            hull_points[:, 0] * cos_a - hull_points[:, 1] * sin_a,
+            hull_points[:, 0] * sin_a + hull_points[:, 1] * cos_a
+        ])
+        
+        # Compute bounding box
+        width = rotated[:, 0].max() - rotated[:, 0].min()
+        height = rotated[:, 1].max() - rotated[:, 1].min()
+        
+        # We want width > height (longest side horizontal)
+        aspect = width / max(height, 1e-6)
+        
+        if aspect > best_aspect:
+            best_aspect = aspect
+            best_angle = -edge_angle  # Negate to rotate data
+    
+    # Normalize angle to reasonable range
+    while best_angle > 90:
+        best_angle -= 180
+    while best_angle < -90:
+        best_angle += 180
+    
+    # If result would make it taller than wide, rotate 90 degrees
+    if best_aspect < 1.0:
+        best_angle += 90 if best_angle < 0 else -90
+    
+    return best_angle
 
+
+def _crop_to_valid(arr, mask, padding=10):
+    """Crop array to bounding box of valid pixels with padding."""
+    ys, xs = np.where(mask)
+    if len(xs) == 0:
+        return arr, (0, arr.shape[0], 0, arr.shape[1])
+    
+    y_min, y_max = max(0, ys.min() - padding), min(arr.shape[0], ys.max() + padding + 1)
+    x_min, x_max = max(0, xs.min() - padding), min(arr.shape[1], xs.max() + padding + 1)
+    
+    return arr[y_min:y_max, x_min:x_max], (y_min, y_max, x_min, x_max)
+
+
+def _rotate_and_crop(arr, angle, mask=None):
+    """Rotate array and optionally crop to valid region."""
+    from scipy.ndimage import rotate as ndimage_rotate
+    
+    if abs(angle) < 0.5:  # Skip rotation for very small angles
+        rotated = arr
+    else:
+        # Rotate with NaN-safe handling
+        arr_filled = np.where(np.isfinite(arr), arr, 0)
+        rotated = ndimage_rotate(arr_filled, angle, reshape=True, order=1, mode='constant', cval=np.nan)
+        
+        # Also rotate the mask to track valid regions
+        mask_rot = ndimage_rotate((~np.isnan(arr)).astype(float), angle, reshape=True, order=0, mode='constant', cval=0)
+        rotated = np.where(mask_rot > 0.5, rotated, np.nan)
+    
+    return rotated
 
 
 def plot_demeaned_color_relief(gt_dm_array, pred_dm_array, diff_dm_array, out_path, vmin=-0.5, vmax=0.5, manual_rotation=None, split_stack=False):
@@ -596,7 +699,7 @@ def plot_demeaned_color_relief(gt_dm_array, pred_dm_array, diff_dm_array, out_pa
             cbar.ax.tick_params(labelsize=15)
 
             if label == "LiDAR (m)":
-                cbar.set_ticks([-dm_abs, -0.1, 0.0, 0.1, dm_abs])
+                cbar.set_ticks([-dm_abs, -0.1, 0.0, 0.1, dm_abs])  # removed ±0.01
                 cbar.formatter = FormatStrFormatter('%.2f')
             else:
                 cbar.set_ticks([-dm_abs, -0.1, 0.0, 0.1, dm_abs])
@@ -604,6 +707,8 @@ def plot_demeaned_color_relief(gt_dm_array, pred_dm_array, diff_dm_array, out_pa
 
             cbar.update_ticks()
 
+    #if not split_stack:
+        #plt.tight_layout()
     fig.subplots_adjust(top=0.96, bottom=0.04)
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     fig.savefig(out_path, dpi=300, bbox_inches="tight", facecolor='white')
@@ -611,7 +716,161 @@ def plot_demeaned_color_relief(gt_dm_array, pred_dm_array, diff_dm_array, out_pa
     print(f"  Saved demeaned 2D composite to {out_path}")
 
 
+def plot_2d_maps(gt_array, pred_array, diff_array, out_path, auto_orient=True, manual_rotation=None, vmin_override=None, vmax_override=None, pct_clip=2.0, split_stack=False):
+    gt_array = gt_array.astype(np.float32)
+    pred_array = pred_array.astype(np.float32)
+    diff_array = diff_array.astype(np.float32)
+    
+    # Create combined valid mask
+    valid_mask = np.isfinite(gt_array) & np.isfinite(pred_array)
+    
+    if manual_rotation is not None:
+        # Use manually specified rotation
+        angle = manual_rotation
+        print(f"  Manual rotation: {angle:.1f} degrees")
+        
+        # Rotate all arrays
+        gt_rot = _rotate_and_crop(gt_array, angle)
+        pred_rot = _rotate_and_crop(pred_array, angle)
+        diff_rot = _rotate_and_crop(diff_array, angle)
+        
+        # Compute new valid mask and crop
+        valid_rot = np.isfinite(gt_rot) & np.isfinite(pred_rot)
+        gt_array, bbox = _crop_to_valid(gt_rot, valid_rot, padding=20)
+        pred_array, _ = _crop_to_valid(pred_rot, valid_rot, padding=20)
+        diff_array, _ = _crop_to_valid(diff_rot, valid_rot, padding=20)
+    elif auto_orient:
+        # Compute optimal rotation angle
+        angle = _compute_optimal_rotation(valid_mask)
+        print(f"  Auto-orientation: rotating by {angle:.1f} degrees")
+        
+        # Rotate all arrays
+        gt_rot = _rotate_and_crop(gt_array, angle)
+        pred_rot = _rotate_and_crop(pred_array, angle)
+        diff_rot = _rotate_and_crop(diff_array, angle)
+        
+        # Compute new valid mask and crop
+        valid_rot = np.isfinite(gt_rot) & np.isfinite(pred_rot)
+        gt_array, bbox = _crop_to_valid(gt_rot, valid_rot, padding=20)
+        pred_array, _ = _crop_to_valid(pred_rot, valid_rot, padding=20)
+        diff_array, _ = _crop_to_valid(diff_rot, valid_rot, padding=20)
+    else:
+        # Just crop without rotation
+        gt_array, bbox = _crop_to_valid(gt_array, valid_mask, padding=20)
+        pred_array, _ = _crop_to_valid(pred_array, valid_mask, padding=20)
+        diff_array, _ = _crop_to_valid(diff_array, valid_mask, padding=20)
 
+    stack = np.stack([gt_array, pred_array], axis=0)
+    
+    # Color scale: use manual overrides if provided, otherwise percentile clipping
+    if vmin_override is not None:
+        vmin = float(vmin_override)
+    else:
+        vmin = float(np.nanpercentile(stack, pct_clip))
+    
+    if vmax_override is not None:
+        vmax = float(vmax_override)
+    else:
+        vmax = float(np.nanpercentile(stack, 100 - pct_clip))
+    
+    print(f"  Color scale: vmin={vmin:.2f}, vmax={vmax:.2f} (pct_clip={pct_clip}%)")
+
+    d = diff_array[np.isfinite(diff_array)]
+    A = np.percentile(np.abs(d), 100 - pct_clip) if d.size else 1.0
+    A = float(max(A, 1e-6))
+    
+    # Compute aspect ratio for proper scaling
+    h, w = gt_array.shape
+    aspect = w / h
+    
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+    
+    if split_stack:
+        # Split wide region in half horizontally, stack halves vertically
+        mid = w // 2
+        gt_left, gt_right = gt_array[:, :mid], gt_array[:, mid:]
+        pred_left, pred_right = pred_array[:, :mid], pred_array[:, mid:]
+        diff_left, diff_right = diff_array[:, :mid], diff_array[:, mid:]
+        
+        print(f"  Split-stack mode: splitting {w}px width into two {mid}px halves")
+        
+        # Figure sizing - 3 groups, each with 2 image rows + colorbar
+        half_aspect = mid / h
+        fig_width = min(12, max(6, half_aspect * 3))
+        fig_height = fig_width / half_aspect * 6 + 5  # 6 image rows + colorbars + spacing
+        
+        from matplotlib.gridspec import GridSpec
+        fig = plt.figure(figsize=(fig_width, fig_height))
+        
+        # GridSpec: 11 rows (2 img + 1 cbar + spacer) × 3 groups, minus last spacer
+        # Format: [img, img, cbar, space, img, img, cbar, space, img, img, cbar]
+        gs = GridSpec(11, 1, figure=fig, 
+                      height_ratios=[1, 1, 0.08, 0.65, 1, 1, 0.08, 0.65, 1, 1, 0.08],
+                      hspace=0.02)
+        
+        groups = [
+            ("Ground Truth", gt_left, gt_right, "terrain", vmin, vmax, "LiDAR (m)", 0),
+            ("Prediction", pred_left, pred_right, "terrain", vmin, vmax, "LiDAR (m)", 4),
+            ("Error (Pred - GT)", diff_left, diff_right, "seismic", -A, +A, "Error (m)", 8),
+        ]
+        
+        for title, left_data, right_data, cmap, v0, v1, label, row_start in groups:
+            ax_top = fig.add_subplot(gs[row_start])
+            ax_bot = fig.add_subplot(gs[row_start + 1])
+            cax = fig.add_subplot(gs[row_start + 2])
+            
+            # Title only on top image with padding
+            ax_top.set_title(title, fontsize=16, fontweight='bold', pad=10)
+            
+            im_top = ax_top.imshow(left_data, cmap=cmap, vmin=v0, vmax=v1, aspect='auto')
+            im_bot = ax_bot.imshow(right_data, cmap=cmap, vmin=v0, vmax=v1, aspect='auto')
+            
+            ax_top.axis("off")
+            ax_bot.axis("off")
+            
+            # Shared colorbar below both halves
+            cbar = fig.colorbar(im_top, cax=cax, orientation="horizontal")
+            cbar.set_label(label, fontsize=12)
+            cbar.ax.tick_params(labelsize=10)
+    else:
+        # Standard 3-row layout
+        # Dynamically size figure based on data aspect ratio
+        if aspect >= 1:  # Wider than tall
+            fig_width = min(14, max(8, aspect * 4))
+            fig_height = fig_width / aspect * 3 + 2  # 3 subplots + colorbar space
+        else:  # Taller than wide
+            fig_height = min(18, max(10, 12 / aspect))
+            fig_width = fig_height * aspect / 3 + 1
+        
+        fig, axes = plt.subplots(3, 1, figsize=(fig_width, fig_height))
+
+        im0 = axes[0].imshow(gt_array, cmap="terrain", vmin=vmin, vmax=vmax, aspect='auto')
+        axes[0].set_title("Ground Truth", fontsize=16, fontweight='bold')
+        axes[0].axis("off")
+
+        im1 = axes[1].imshow(pred_array, cmap="terrain", vmin=vmin, vmax=vmax, aspect='auto')
+        axes[1].set_title("Prediction", fontsize=16, fontweight='bold')
+        axes[1].axis("off")
+
+        im2 = axes[2].imshow(diff_array, cmap="seismic", vmin=-A, vmax=+A, aspect='auto')
+        axes[2].set_title("Error (Pred - GT)", fontsize=16, fontweight='bold')
+        axes[2].axis("off")
+        
+        for ax, im, label in [(axes[0], im0, "LiDAR (m)"), 
+                               (axes[1], im1, "LiDAR (m)"), 
+                               (axes[2], im2, "Error (m)")]:
+            divider = make_axes_locatable(ax)
+            cax = divider.append_axes("bottom", size="5%", pad=0.1)
+            cbar = fig.colorbar(im, cax=cax, orientation="horizontal")
+            cbar.set_label(label, fontsize=16)
+            cbar.ax.tick_params(labelsize=14)
+
+    if not split_stack:
+        plt.tight_layout()
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    fig.savefig(out_path, dpi=300, bbox_inches="tight", facecolor='white')
+    plt.close(fig)
+    print(f"Saved 2D composite to {out_path}")
 
 
 def _metric_params_from_cfg(cfg):
@@ -1545,7 +1804,25 @@ def main():
         "--rotation",
         type=float,
         default=None,
-        help="Manual rotation angle in degrees for demeaned mosaic. Use interactive_rotation.py to find optimal value.",
+        help="Manual rotation angle in degrees for 2D plots. Use interactive_rotation.py to find optimal value.",
+    )
+    parser.add_argument(
+        "--vmin",
+        type=float,
+        default=None,
+        help="Manual minimum value for elevation colorbar. If not set, uses percentile clipping.",
+    )
+    parser.add_argument(
+        "--vmax",
+        type=float,
+        default=None,
+        help="Manual maximum value for elevation colorbar. If not set, uses percentile clipping.",
+    )
+    parser.add_argument(
+        "--pct-clip",
+        type=float,
+        default=2.0,
+        help="Percentile for color scale clipping (default: 2.0, meaning clip at 2nd and 98th percentile).",
     )
     parser.add_argument(
         "--rebuild-mosaic",
@@ -1715,6 +1992,16 @@ def main():
             gt_dm_array, pred_dm_array, diff_dm_array, dm_2d_path,
             vmin=-0.5, vmax=0.5,
             manual_rotation=args.rotation,
+            split_stack=args.split_stack,
+        )
+
+        two_d_path = os.path.join(out_dir, f"{region_key}_mosaic_2d.png")
+        plot_2d_maps(
+            gt_array, pred_array, diff_array, two_d_path,
+            manual_rotation=args.rotation,
+            vmin_override=args.vmin,
+            vmax_override=args.vmax,
+            pct_clip=args.pct_clip,
             split_stack=args.split_stack,
         )
 
