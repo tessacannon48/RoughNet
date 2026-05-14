@@ -1,6 +1,6 @@
 
 # Mapping Arctic Ice Terrain Using Diffusion-Based Super-Resolution of Satellite Imagery
-![alt text](https://github.com/tessacannon48/RoughNet/blob/main/figures/model_diagram_temp.png)
+![alt text](https://github.com/tessacannon48/RoughNet/blob/main/figures/final_figures/model_diagram_temp.png)
 
 ## About The Project
 
@@ -57,7 +57,7 @@ The multispectral satellite imagery used in this study is obtained from the Euro
 ---
 
 ## Dataset Construction
-![alt text](https://github.com/tessacannon48/RoughNet/blob/main/figures/sample_patch.png)
+![alt text](https://github.com/tessacannon48/RoughNet/blob/main/figures/final_figures/sample_patch.png)
 
 1. Preprocessing
 - Script: `/Dissertation/scripts/lidar_preprocessing.py`  
