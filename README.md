@@ -1,6 +1,6 @@
 
 # Mapping Arctic Ice Terrain Using Diffusion-Based Super-Resolution of Satellite Imagery
-![alt text](https://github.com/tessacannon48/RoughNet/blob/main/figures/final_figures/model_diagram_temp.png)
+![alt text](https://github.com/tessacannon48/RoughNet/blob/main/figures/final_figures/model_diagram.png)
 
 ## About The Project
 
