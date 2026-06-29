@@ -1,12 +1,10 @@
 #evaluation.py 
 
-import os, sys, json, glob, time, argparse, csv
+import os, sys, json, glob, time, argparse
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
 import rasterio
-from rasterio.enums import Resampling
-from rasterio.warp import reproject
 from tqdm import tqdm
 import yaml
 import matplotlib.pyplot as plt
@@ -39,7 +37,7 @@ warnings.filterwarnings("ignore")
 NODATA = -9999.0
 
 
-def get_region_preset(region_name: str, model_type: str = "cosine"):
+def get_region_preset(region_name: str, model_type: str = "cosine", root: str = "."):
     key = region_name.strip().lower()
     if key not in ("pondinlet", "tuk", "cambridge"):
         raise ValueError(
@@ -54,8 +52,7 @@ def get_region_preset(region_name: str, model_type: str = "cosine"):
             "Expected one of: 'cosine', 'linear'."
         )
 
-    root = "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation"
-    ckpt_path = f"{root}/models/{model_type}_k6_att_best.pth"
+    root = os.path.abspath(root)
 
     if key == "pondinlet":
         pretty_name = "Pond Inlet"
@@ -67,19 +64,16 @@ def get_region_preset(region_name: str, model_type: str = "cosine"):
         pretty_name = "Cambridge Bay"
         zone_ids = None
 
-    if key in ("pondinlet", "tuk"):
-        out_prefix = "final_val"
-    else:
-        out_prefix = "final_test"
+    out_prefix = "final_val" if key in ("pondinlet", "tuk") else "final_test"
 
     return {
         "region_key": key,
         "pretty_name": pretty_name,
         "zone_ids": zone_ids,
-        "ckpt_path": ckpt_path,
-        "s2_dir": f"{root}/input_data/s2_patches_{key}",
-        "lidar_dir": f"{root}/input_data/lidar_patches_{key}",
-        "out_dir": f"{root}/figures/{model_type}_model/{out_prefix}_{key}",
+        "ckpt_path": os.path.join(root, "models", f"{model_type}_k6_att_best.pth"),
+        "s2_dir": os.path.join(root, "input_data", f"s2_patches_{key}"),
+        "lidar_dir": os.path.join(root, "input_data", f"lidar_patches_{key}"),
+        "out_dir": os.path.join(root, "figures", f"{model_type}_model", f"{out_prefix}_{key}"),
     }
 
 
@@ -261,12 +255,6 @@ def build_averaged_mosaic(tif_list, out_path, compress=None, nodata=NODATA):
             data = src.read(1).astype(np.float32)
             data = np.where(data == nodata, np.nan, data)
 
-            #margin = 16  # discard 16px border
-            #data[:margin, :] = np.nan
-            #data[-margin:, :] = np.nan
-            #data[:, :margin] = np.nan
-            #data[:, -margin:] = np.nan
-            
             # Create valid mask and compute weights
             valid = np.isfinite(data)
             if not np.any(valid):
@@ -690,217 +678,6 @@ def _compute_metrics_tensor(
         "abs_rel_near_zero_fraction": near_zero_fraction,
     }
 
-def _valid_mask_from_arrays(gt_array, pred_array):
-    return np.isfinite(gt_array) & np.isfinite(pred_array)
-
-
-def compute_and_save_region_metrics(gt_array, pred_array, out_dir, cfg):
-    stats_dir = os.path.join(out_dir, "reconstruction_statistics")
-    os.makedirs(stats_dir, exist_ok=True)
-
-    mask_np = _valid_mask_from_arrays(gt_array, pred_array)
-    if not np.any(mask_np):
-        raise ValueError("No valid pixels found for region metrics.")
-    gt_t = torch.from_numpy(gt_array).float()
-    pr_t = torch.from_numpy(pred_array).float()
-    m_t = torch.from_numpy(mask_np).bool()
-
-    px, jsd_scales, jsd_bins, use_sobel, deg, use_window = _metric_params_from_cfg(cfg)
-    absrel_eps = float(cfg.get("evaluation", {}).get("absrel_epsilon_m", 0.05))
-
-    metrics = _compute_metrics_tensor(
-        gt_t, pr_t, m_t,
-        px, jsd_scales, jsd_bins, use_sobel, deg, use_window,
-        absrel_eps=absrel_eps,
-        use_absrel_epsilon=True,
-    )
-
-    gt_masked = torch.masked_select(gt_t, m_t)
-    pr_masked = torch.masked_select(pr_t, m_t)
-
-    region_stats = {
-        "scope": "region_mosaic",
-        "valid_pixel_count": int(m_t.sum().item()),
-        **metrics,
-        "gt_min_val": float(gt_masked.min().item()),
-        "gt_max_val": float(gt_masked.max().item()),
-        "gt_mean_val": float(gt_masked.mean().item()),
-        "gt_std_val": float(gt_masked.std(unbiased=False).item()),
-        "pred_min_val": float(pr_masked.min().item()),
-        "pred_max_val": float(pr_masked.max().item()),
-        "pred_mean_val": float(pr_masked.mean().item()),
-        "pred_std_val": float(pr_masked.std(unbiased=False).item()),
-        "pixel_size_m": px,
-        "jsd_scales_m": list(jsd_scales),
-        "jsd_bins": jsd_bins,
-        "nae_use_sobel": use_sobel,
-        "nae_degrees": deg,
-        "psd_window": use_window,
-    }
-
-    out_json = os.path.join(stats_dir, "region_reconstruction_stats.json")
-    with open(out_json, "w") as f:
-        json.dump(region_stats, f, indent=4)
-    print(f"Saved region reconstruction stats → {out_json}")
-
-
-def compute_and_save_patch_metrics(out_dir, cfg):
-    stats_dir = os.path.join(out_dir, "reconstruction_statistics")
-    os.makedirs(stats_dir, exist_ok=True)
-
-    pred_tiles_dir = os.path.join(out_dir, "pred_tiles")
-    if not os.path.isdir(pred_tiles_dir):
-        raise FileNotFoundError(f"No pred_tiles directory found at {pred_tiles_dir}")
-
-    pred_tifs = sorted(glob.glob(os.path.join(pred_tiles_dir, "pred_*.tif")))
-    if len(pred_tifs) == 0:
-        raise FileNotFoundError(f"No predicted tiles found in {pred_tiles_dir}")
-
-    lidar_dir = cfg["data"].get("lidar_dir") or cfg["data"].get("lidar_dirs")
-    if isinstance(lidar_dir, list):
-        lidar_dir = lidar_dir[0]
-
-    px, jsd_scales, jsd_bins, use_sobel, deg, use_window = _metric_params_from_cfg(cfg)
-
-    rows = []
-    for pred_fp in tqdm(pred_tifs, desc="Per-patch metrics"):
-        basename = os.path.basename(pred_fp)
-        tile_id = basename[len("pred_"):-4]
-
-        gt_fp = find_lidar_patch(lidar_dir, tile_id)
-
-        with rasterio.open(gt_fp) as g, rasterio.open(pred_fp) as p:
-            g_arr = g.read().astype(np.float32)
-            gt = g_arr[0]
-            if g.count >= 2:
-                gmask = g_arr[1] > 0.5
-            else:
-                gmask = np.isfinite(gt)
-
-            gt = np.where(gmask & np.isfinite(gt), gt, np.nan).astype(np.float32)
-
-            pr = p.read(1, masked=True).astype(np.float32).filled(np.nan)
-            pr = np.where(pr == NODATA, np.nan, pr).astype(np.float32)
-
-            gt = _apply_gt_cleanup(gt)
-            pr = _apply_pred_cleanup(pr)
-
-            if (gt.shape != pr.shape) or (g.transform != p.transform):
-                pr_aligned = np.full_like(gt, NODATA, dtype=np.float32)
-                reproject(
-                    source=np.where(np.isnan(pr), NODATA, pr).astype(np.float32),
-                    destination=pr_aligned,
-                    src_transform=p.transform, src_crs=p.crs,
-                    dst_transform=g.transform, dst_crs=g.crs,
-                    resampling=Resampling.bilinear,
-                    src_nodata=p.nodata if p.nodata is not None else NODATA,
-                    dst_nodata=NODATA,
-                )
-                pr = np.where(pr_aligned == NODATA, np.nan, pr_aligned).astype(np.float32)
-                pr = _apply_pred_cleanup(pr)
-
-        mask_np = _valid_mask_from_arrays(gt, pr)
-        if not np.any(mask_np):
-            row = {"tile_id": tile_id, "valid_pixel_count": 0}
-            for k in [
-                    "rmse_phys_m", "bias_phys_m", "sigma_error_pct",
-                    "normal_angle_error_deg", "zncc", "jsd", "psd_rmse",
-
-                    "abs_rel_error", "abs_rel_epsilon_m", "abs_rel_near_zero_fraction",
-
-                    "gt_mean_val", "gt_std_val", "pred_mean_val", "pred_std_val",
-                    "gt_min_val", "gt_max_val", "pred_min_val", "pred_max_val"
-                ]:
-                row[k] = float("nan")
-            rows.append(row)
-            continue
-
-        gt_t = torch.from_numpy(gt).float()
-        pr_t = torch.from_numpy(pr).float()
-        m_t = torch.from_numpy(mask_np).bool()
-
-        absrel_eps = float(cfg.get("evaluation", {}).get("absrel_epsilon_m", 0.05))
-
-        metrics = _compute_metrics_tensor(
-            gt_t, pr_t, m_t,
-            px, jsd_scales, jsd_bins, use_sobel, deg, use_window,
-            absrel_eps=absrel_eps,
-            use_absrel_epsilon=True,
-        )
-
-        gt_masked = torch.masked_select(gt_t, m_t)
-        pr_masked = torch.masked_select(pr_t, m_t)
-
-        row = {
-            "tile_id": tile_id,
-            "valid_pixel_count": int(m_t.sum().item()),
-            **metrics,
-            "gt_mean_val": float(gt_masked.mean().item()),
-            "gt_std_val": float(gt_masked.std(unbiased=False).item()),
-            "pred_mean_val": float(pr_masked.mean().item()),
-            "pred_std_val": float(pr_masked.std(unbiased=False).item()),
-            "gt_min_val": float(gt_masked.min().item()),
-            "gt_max_val": float(gt_masked.max().item()),
-            "pred_min_val": float(pr_masked.min().item()),
-            "pred_max_val": float(pr_masked.max().item()),
-        }
-        rows.append(row)
-
-    csv_path = os.path.join(stats_dir, "patch_reconstruction_stats.csv")
-    fieldnames = [
-        "tile_id", "valid_pixel_count",
-        "rmse_phys_m", "bias_phys_m",
-        "sigma_error_pct", "normal_angle_error_deg", "zncc", "jsd", "psd_rmse",
-
-        # Relative / normalized metrics
-        "abs_rel_error",
-        "nrmse_std",
-        "abs_rel_epsilon_m",
-        "abs_rel_near_zero_fraction",
-
-        # Stats
-        "gt_mean_val", "gt_std_val", "pred_mean_val", "pred_std_val",
-        "gt_min_val", "gt_max_val", "pred_min_val", "pred_max_val",
-    ]
-    with open(csv_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        for r in rows:
-            writer.writerow(r)
-    print(f"Saved per-patch reconstruction CSV → {csv_path}")
-
-    def _nanmean(vals):
-        arr = np.array(vals, dtype=np.float64)
-        return float(np.nanmean(arr)) if arr.size else float("nan")
-
-    def _weighted_mean(vals, weights):
-        v = np.array(vals, dtype=np.float64)
-        w = np.array(weights, dtype=np.float64)
-        m = np.isfinite(v) & (w > 0)
-        if not np.any(m):
-            return float("nan")
-        return float(np.average(v[m], weights=w[m]))
-
-    weights = [r["valid_pixel_count"] for r in rows]
-    metrics_keys = [
-        "rmse_phys_m", "bias_phys_m", "sigma_error_pct",
-        "normal_angle_error_deg", "zncc", "jsd", "psd_rmse",
-        "abs_rel_error", "nrmse_std"
-    ]
-
-    macro_avgs = {k: _nanmean([r[k] for r in rows]) for k in metrics_keys}
-    weighted_avgs = {k: _weighted_mean([r[k] for r in rows], weights) for k in metrics_keys}
-
-    summary_json = {
-        "scope": "per_patch_summary",
-        "num_patches": len(rows),
-        "macro_average": macro_avgs,
-        "weighted_by_valid_pixel_count": weighted_avgs,
-    }
-    with open(os.path.join(stats_dir, "patch_reconstruction_summary.json"), "w") as f:
-        json.dump(summary_json, f, indent=4)
-    print("Saved per-patch summary JSON →", os.path.join(stats_dir, "patch_reconstruction_summary.json"))
-
 def compute_and_save_patch_metrics_demeaned(out_dir, cfg):
     stats_dir = os.path.join(out_dir, "reconstruction_statistics")
     os.makedirs(stats_dir, exist_ok=True)
@@ -1032,97 +809,6 @@ def compute_and_save_patch_metrics_demeaned(out_dir, cfg):
         json.dump(summary_json, f, indent=4)
 
     print(f"Saved per-patch demeaned summary JSON → {out_json}")
-
-
-def plot_region_pdfs(gt_array, pred_array, out_path,
-                     bins=256, low_pct=0.5, high_pct=99.5,
-                     smooth_sigma=None, logy=False, title=None):
-    mask = np.isfinite(gt_array) & np.isfinite(pred_array)
-    gt = gt_array[mask].astype(np.float64)
-    pr = pred_array[mask].astype(np.float64)
-    if gt.size == 0 or pr.size == 0:
-        raise ValueError("No valid pixels to build PDFs.")
-
-    combined = np.concatenate([gt, pr], axis=0)
-    xmin = float(np.percentile(combined, low_pct))
-    xmax = float(np.percentile(combined, high_pct))
-    if not np.isfinite(xmin) or not np.isfinite(xmax) or xmin >= xmax:
-        xmin = float(np.min(combined))
-        xmax = float(np.max(combined))
-
-    bin_edges = np.linspace(xmin, xmax, bins + 1, dtype=np.float64)
-    bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
-    bin_width = bin_edges[1] - bin_edges[0]
-
-    gt_hist, _ = np.histogram(gt, bins=bin_edges, density=True)
-    pr_hist, _ = np.histogram(pr, bins=bin_edges, density=True)
-
-    if smooth_sigma is not None and smooth_sigma > 0:
-        gt_hist = gaussian_filter1d(gt_hist, sigma=smooth_sigma, mode="nearest")
-        pr_hist = gaussian_filter1d(pr_hist, sigma=smooth_sigma, mode="nearest")
-
-    eps = 1e-12
-    p = gt_hist * bin_width
-    q = pr_hist * bin_width
-    p_sum = p.sum()
-    q_sum = q.sum()
-    if p_sum <= 0 or q_sum <= 0:
-        jsd = float("nan")
-    else:
-        p = p / (p_sum + eps)
-        q = q / (q_sum + eps)
-        m = 0.5 * (p + q)
-
-        def _kl(a, b):
-            a_safe = np.clip(a, eps, 1.0)
-            b_safe = np.clip(b, eps, 1.0)
-            return float(np.sum(a_safe * np.log(a_safe / b_safe)))
-
-        jsd = 0.5 * _kl(p, m) + 0.5 * _kl(q, m)
-
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(bin_centers, gt_hist, label=f"Ground truth (n={gt.size:,})", linewidth=2)
-    ax.plot(bin_centers, pr_hist, label=f"Prediction (n={pr.size:,})", linewidth=2, linestyle="--")
-    ax.set_xlim([xmin, xmax])
-    
-    # Extend y-axis slightly to make room for JSD label
-    ymin, ymax = ax.get_ylim()
-    ax.set_ylim([ymin, ymax * 1.15])
-    
-    ax.set_xlabel("LiDAR (m)")
-    ax.set_ylabel("Probability density")
-    if title:
-        ax.set_title(title)
-    if logy:
-        ax.set_yscale("log")
-    ax.grid(True, alpha=0.2)
-    ax.legend()
-
-    if np.isfinite(jsd):
-        ax.text(0.02, 0.98, f"JSD = {jsd:.4f}", transform=ax.transAxes,
-                ha="left", va="top", fontsize=13,
-                bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"))
-
-    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
-    print(f"Saved region PDF plot → {out_path}")
-
-    meta = {
-        "bins": bins,
-        "low_pct": low_pct,
-        "high_pct": high_pct,
-        "smooth_sigma": smooth_sigma,
-        "logy": logy,
-        "xmin": xmin,
-        "xmax": xmax,
-        "valid_n_gt": int(gt.size),
-        "valid_n_pred": int(pr.size),
-        "jsd": jsd,
-    }
-    with open(out_path.replace(".png", "_meta.json"), "w") as f:
-        json.dump(meta, f, indent=2)
 
 
 def plot_region_pdfs_demeaned(pred_tiles_dir, gt_tiles_dir, out_path,
@@ -1420,49 +1106,15 @@ def run_predictions_and_mosaics(ckpt_path, config_yaml, out_dir,
     return pred_mosaic_path, gt_mosaic_path, cfg
 
 
-def align_and_save_diff(pred_mosaic_path, gt_mosaic_path, out_dir):
-    with rasterio.open(gt_mosaic_path) as g, rasterio.open(pred_mosaic_path) as p:
-        gt_array = g.read(1, masked=True).astype(np.float32).filled(np.nan)
-        pred_array = p.read(1, masked=True).astype(np.float32).filled(np.nan)
-
-        gt_array = np.where(gt_array == NODATA, np.nan, gt_array)
-        pred_array = np.where(pred_array == NODATA, np.nan, pred_array)
-
-        gt_array = _apply_gt_cleanup(gt_array)
-        pred_array = _apply_pred_cleanup(pred_array)
-
-        if (gt_array.shape != pred_array.shape) or (g.transform != p.transform):
-            pred_aligned = np.full_like(gt_array, NODATA, dtype=np.float32)
-            reproject(
-                source=np.where(np.isnan(pred_array), NODATA, pred_array).astype(np.float32),
-                destination=pred_aligned,
-                src_transform=p.transform, src_crs=p.crs,
-                dst_transform=g.transform, dst_crs=g.crs,
-                resampling=Resampling.bilinear,
-                src_nodata=p.nodata if p.nodata is not None else NODATA,
-                dst_nodata=NODATA,
-            )
-            pred_array = np.where(pred_aligned == NODATA, np.nan, pred_aligned).astype(np.float32)
-            pred_array = _apply_pred_cleanup(pred_array)
-
-        diff_array = pred_array - gt_array
-        diff_path = os.path.join(out_dir, "diff_pred_minus_gt.tif")
-
-        diff_to_write = np.where(np.isfinite(diff_array), diff_array, NODATA).astype(np.float32)
-
-        prof = g.profile.copy()
-        prof.update(dtype="float32", count=1, compress="deflate", nodata=float(NODATA))
-
-        with rasterio.open(diff_path, "w", **prof) as dst:
-            dst.write(diff_to_write, 1)
-
-        print("Wrote diff raster →", diff_path)
-    return gt_array, pred_array, diff_array, diff_path
-
-
 def main():
     parser = argparse.ArgumentParser(
         description="Evaluate RoughNet on a given region (val or test)."
+    )
+    parser.add_argument(
+        "--root",
+        type=str,
+        default=".",
+        help="Root directory of the project (containing models/, input_data/, figures/). Defaults to the current working directory.",
     )
     parser.add_argument(
         "--region",
@@ -1560,7 +1212,7 @@ def main():
 
     args = parser.parse_args()
 
-    preset = get_region_preset(args.region, args.model)
+    preset = get_region_preset(args.region, args.model, root=args.root)
     region_key = preset["region_key"]
     region_name = preset["pretty_name"]
     zone_ids = preset["zone_ids"]
@@ -1654,7 +1306,7 @@ def main():
             cfg_used = config
         else:
             print(f"Running prediction + mosaicking (sampler={sampler_name})...")
-            pred_mosaic_path, gt_mosaic_path, cfg_used = run_predictions_and_mosaics(
+            _, _, cfg_used = run_predictions_and_mosaics(
                 ckpt_path=CKPT_PATH,
                 config_yaml=config,
                 out_dir=out_dir,
@@ -1668,26 +1320,6 @@ def main():
                 deterministic_order=args.deterministic_order,
             )
 
-        gt_array, pred_array, diff_array, diff_path = align_and_save_diff(
-            pred_mosaic_path=pred_mosaic_path,
-            gt_mosaic_path=gt_mosaic_path,
-            out_dir=out_dir,
-        )
-
-        pdf_path = os.path.join(out_dir, f"{region_key}_pdfs.png")
-        plot_region_pdfs(
-            gt_array,
-            pred_array,
-            pdf_path,
-            bins=256,
-            low_pct=0.01,
-            high_pct=99.99,
-            smooth_sigma=1.5,
-            logy=False,
-            title=f"Region PDFs: GT vs Prediction ({region_name})",
-        )
-
-        # De-meaned PDF plot (local roughness comparison)
         demeaned_pdf_path = os.path.join(out_dir, f"{region_key}_pdfs_demeaned.png")
         plot_region_pdfs_demeaned(
             pred_tiles_dir=os.path.join(out_dir, "pred_tiles"),
@@ -1701,15 +1333,12 @@ def main():
             title=f"LiDAR Distribution: GT vs Prediction ({region_name})",
         )
 
-        # De-meaned mosaics (local roughness visualization)
-        # Uses fixed color scale (-0.5 to +0.5m) with RdBu_r (after professor's method)
         _, _, gt_dm_array, pred_dm_array, diff_dm_array = build_demeaned_mosaics(
             pred_tiles_dir=os.path.join(out_dir, "pred_tiles"),
             gt_tiles_dir=os.path.join(out_dir, "gt_tiles"),
             out_dir=out_dir,
         )
 
-        # Plot de-meaned 2D maps with fixed symmetric color scale (professor's approach)
         dm_2d_path = os.path.join(out_dir, f"{region_key}_mosaic_2d_demeaned.png")
         plot_demeaned_color_relief(
             gt_dm_array, pred_dm_array, diff_dm_array, dm_2d_path,
@@ -1719,22 +1348,19 @@ def main():
         )
 
         if not args.skip_stats:
-            compute_and_save_region_metrics(gt_array, pred_array, out_dir, cfg_used)
-            compute_and_save_patch_metrics(out_dir, cfg_used)
             compute_and_save_patch_metrics_demeaned(out_dir, cfg_used)
         else:
             print("Skipping reconstruction statistics (--skip-stats).")
 
+        pred_mosaic_path = os.path.join(out_dir, "pred_mosaic.tif")
+        gt_mosaic_path = os.path.join(out_dir, "gt_mosaic.tif")
         print("\nDone.")
         print("Outputs:")
         print(f"  Region:       {region_name} ({region_key})")
         print(f"  Sampler:      {sampler_name}")
         print(f"  GT mosaic:    {gt_mosaic_path}")
         print(f"  Pred mosaic:  {pred_mosaic_path}")
-        print(f"  Diff raster:  {diff_path}")
-        print(f"  Region stats: {os.path.join(out_dir, 'reconstruction_statistics', 'region_reconstruction_stats.json')}")
-        print(f"  Patch CSV:    {os.path.join(out_dir, 'reconstruction_statistics', 'patch_reconstruction_stats.csv')}")
-        print(f"  Patch summary:{os.path.join(out_dir, 'reconstruction_statistics', 'patch_reconstruction_summary.json')}")
+        print(f"  Patch stats:  {os.path.join(out_dir, 'reconstruction_statistics', 'patch_reconstruction_summary_demeaned.json')}")
 
 
 if __name__ == "__main__":

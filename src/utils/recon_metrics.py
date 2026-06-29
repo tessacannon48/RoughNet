@@ -677,8 +677,6 @@ def zncc(
 
     return torch.nanmean(torch.stack(vals))
 
-# Legacy metrics
-
 @torch.no_grad()
 def corr_length_error(
     gt: torch.Tensor,

@@ -188,7 +188,7 @@ class ConditionalUNet(nn.Module):
             - 'mid'    : attention only in the innermost encoder & first decoder block
             - 'heavy'  : like 'mid', plus one neighbouring block on each side:
                          encoder idx in {depth-2, depth-1}, decoder idx in {0, 1}
-            - 'default': currently same as 'none' (no attention)
+            - 'default': same as 'none' (no attention)
         """
         if self.attention_variant == 'none':
             return False
@@ -214,8 +214,6 @@ class ConditionalUNet(nn.Module):
                 if stage == 'up' and idx == 0:
                     return True
                 return False
-        elif self.attention_variant == 'default':
-            return False
         else:
             return False
         

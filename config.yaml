@@ -9,12 +9,12 @@ data:
     - 4
     - 13
   evaluation_patch_ids: ["05275","05301", "05400", "05408", "12520","12530","12544","12551"]
-  s2_dirs: 
-    - "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/input_data/s2_patches_pondinlet_2024"
-    - "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/input_data/s2_patches_tuk"
-  lidar_dirs: 
-    - "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/input_data/lidar_patches_pondinlet_2024"
-    - "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/input_data/lidar_patches_tuk"
+  s2_dirs:
+    - "input_data/s2_patches_pondinlet_2024"
+    - "input_data/s2_patches_tuk"
+  lidar_dirs:
+    - "input_data/lidar_patches_pondinlet_2024"
+    - "input_data/lidar_patches_tuk"
   # meters per pixel for LiDAR/residual raster
   pixel_size_m: 1.0
 
@@ -44,8 +44,8 @@ logging:
   wandb_project: "rough_net"
   wandb_name: null
   run_name: "default_run"
-  save_dir: "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/models"
-  output_dir: "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/reconstructions"
+  save_dir: "models"
+  output_dir: "reconstructions"
 
 # Sampling and evaluation
 evaluation:

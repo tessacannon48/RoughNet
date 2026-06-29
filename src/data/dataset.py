@@ -1,5 +1,5 @@
-import glob # type: ignore
-import random # type: ignore
+import glob
+import random
 import math
 import numpy as np
 import torch
@@ -147,7 +147,6 @@ class LidarS2Dataset(Dataset):
             cloud = torch.tensor(float(r.get("cloud_cover", 0.0)) / 100.0).clamp(0, 1)
             saz = self._encode_angles_deg(r.get("sun_azimuth_mean", 0.0), r.get("sun_zenith_mean", 0.0))
             vaz = self._encode_angles_deg(r.get("view_azimuth_mean", 0.0), r.get("view_zenith_mean", 0.0))
-            # SCALE AGE (months) rather than raw days; ideally reference LiDAR date per tile
             age = torch.tensor(self._days_from_ref(r.get("acquisition_date"), ref_date=ref_date) / 30.0, dtype=torch.float32).view(1)
             feats.append(torch.cat([cloud.view(1), saz, vaz, age], dim=0))  # [8]
         while len(feats) < self.max_s2:

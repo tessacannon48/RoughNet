@@ -6,7 +6,6 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from torchmetrics.functional import structural_similarity_index_measure as ssim
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -27,11 +26,10 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.utils.argparse import parse_arguments
 from src.data.dataset import LidarS2Dataset
-from src.data.processing import compute_s2_mean_std_multi
 from src.model.unet import ConditionalUNet
 from src.diffusion.scheduler import LinearDiffusionScheduler, CosineDiffusionScheduler
 from src.diffusion.sampling import p_sample_loop_ddpm, p_sample_loop_ddim, p_sample_loop_plms
-from src.utils.metrics import compute_topographic_rmse, normalize_batch, masked_mse_loss, masked_mae_loss, masked_hybrid_mse_loss, masked_hybrid_mae_loss
+from src.utils.metrics import normalize_batch, masked_mse_loss, masked_mae_loss, masked_hybrid_mse_loss, masked_hybrid_mae_loss
 from src.utils.recon_metrics import (
     rmse as rmse_recon,
     bias as bias_recon,
@@ -90,10 +88,6 @@ def train_model(config):
     # Select the loss function
     criterion = loss_functions.get(loss_name)
 
-    # Specify training location names from config
-    train_locations = config["data"].get("train_locations", [])
-    location_tag = "-".join(train_locations) if train_locations else "all"
-
     # Load all patch IDs and their regions from multiple S2 dirs
     all_patch_ids = []
     for s2_dir in config["data"]["s2_dirs"]:
@@ -129,20 +123,10 @@ def train_model(config):
     print(f"Number of training patches: {len(train_pids)}")
     print(f"Number of validation patches (Regions {', '.join(map(str, validation_regions))}): {len(val_pids)}")
     
-    # Create a list of S2 patch directories for the training set only
-    train_s2_dirs = []
-    for s2_dir in config["data"]["s2_dirs"]:
-        for pid in train_pids:
-            patch_path = os.path.join(s2_dir, f"s2_patch_{pid}")
-            if os.path.isdir(patch_path):
-                train_s2_dirs.append(patch_path)
-
     # Create training and validation datasets using the pre-defined patch IDs
     train_dataset = LidarS2Dataset(
         lidar_dirs=config["data"]["lidar_dirs"],
         s2_dirs=config["data"]["s2_dirs"],
-        #s2_means=s2_means,
-        #s2_stds=s2_stds,
         context_k=config["training"]["context_k"],
         randomize_context=config["training"]["randomize_context"],
         augment=True,
@@ -154,11 +138,9 @@ def train_model(config):
     val_dataset = LidarS2Dataset(
         lidar_dirs=config["data"]["lidar_dirs"],
         s2_dirs=config["data"]["s2_dirs"],
-        #s2_means=s2_means,
-        #s2_stds=s2_stds,
         context_k=config["training"]["context_k"],
         randomize_context=config["training"]["randomize_context"],
-        augment=False, # No augmentation for validation set
+        augment=False,
         debug=config["system"]["debug"],
         split_pids=val_pids,
         split="val"
@@ -218,8 +200,6 @@ def train_model(config):
         
         model.train()
         epoch_start_time = time.perf_counter()
-        epoch_loss = 0
-
         # Training metrics
         total_train_loss = 0
         total_train_pixel_loss = 0
@@ -420,9 +400,6 @@ def run_reconstruction_evaluation(model, val_dataset, config, scheduler=None):
     if not p_samplers:
         print("No valid samplers available")
         return
-
-    # Determine which sentinel-2 patches were used to condition the model
-    used_patch_ids = chosen_ids_batch
 
     # Iterate over each sampling method
     for sampler_name, sampler_func in p_samplers.items():
@@ -750,10 +727,10 @@ if __name__ == "__main__":
     print(f"Model Type: Standard U-Net")
     print(f"Data Paths:")
     # Handle multiple directories and region names
-    train_regions = config['data'].get('train_regions', [])
+    train_locations = config['data'].get('train_locations', [])
     s2_dirs = config['data'].get('s2_dirs', [])
     lidar_dirs = config['data'].get('lidar_dirs', [])
-    print(f"  Training Regions: {', '.join(train_regions)}")
+    print(f"  Training Locations: {', '.join(train_locations)}")
     print("  Sentinel-2 Directories:")
     for d in s2_dirs:
         print(f"    - {d}")

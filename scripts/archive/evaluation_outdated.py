@@ -39,7 +39,7 @@ warnings.filterwarnings("ignore")
 NODATA = -9999.0
 
 
-def get_region_preset(region_name: str, model_type: str = "cosine"):
+def get_region_preset(region_name: str, model_type: str = "cosine", root: str = "."):
     key = region_name.strip().lower()
     if key not in ("pondinlet", "tuk", "cambridge"):
         raise ValueError(
@@ -54,8 +54,7 @@ def get_region_preset(region_name: str, model_type: str = "cosine"):
             "Expected one of: 'cosine', 'linear'."
         )
 
-    root = "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation"
-    ckpt_path = f"{root}/models/{model_type}_k6_att_best.pth"
+    root = os.path.abspath(root)
 
     if key == "pondinlet":
         pretty_name = "Pond Inlet"
@@ -67,19 +66,16 @@ def get_region_preset(region_name: str, model_type: str = "cosine"):
         pretty_name = "Cambridge Bay"
         zone_ids = None
 
-    if key in ("pondinlet", "tuk"):
-        out_prefix = "final_val"
-    else:
-        out_prefix = "final_test"
+    out_prefix = "final_val" if key in ("pondinlet", "tuk") else "final_test"
 
     return {
         "region_key": key,
         "pretty_name": pretty_name,
         "zone_ids": zone_ids,
-        "ckpt_path": ckpt_path,
-        "s2_dir": f"{root}/input_data/s2_patches_{key}",
-        "lidar_dir": f"{root}/input_data/lidar_patches_{key}",
-        "out_dir": f"{root}/figures/{model_type}_model/{out_prefix}_{key}",
+        "ckpt_path": os.path.join(root, "models", f"{model_type}_k6_att_best.pth"),
+        "s2_dir": os.path.join(root, "input_data", f"s2_patches_{key}"),
+        "lidar_dir": os.path.join(root, "input_data", f"lidar_patches_{key}"),
+        "out_dir": os.path.join(root, "figures", f"{model_type}_model", f"{out_prefix}_{key}"),
     }
 
 
