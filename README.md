@@ -251,5 +251,6 @@ python evaluation.py --region pondinlet --skip-predict
 
 ## Contact
 
-Authors: Tessa Cannon, Michel Tsamados, Petru Manescu, Thomas Newman, Christian Haas, and Veit Helm
+Authors: Tessa Cannon, Michel Tsamados, Petru Manescu, Thomas Newman, Christian Haas, Veit Helm, and Weibin Chen.
+
 Please email me tessacannon48@gmail.com if you would like to discuss this work.
