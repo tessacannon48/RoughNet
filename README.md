@@ -38,7 +38,6 @@ Dissertation
 ## Data Source
 
 ### LiDAR 
-![alt text]()
 
 **Provider:** Private research team. 
 
