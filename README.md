@@ -249,6 +249,15 @@ python evaluation.py --region cambridge
 python evaluation.py --region pondinlet --skip-predict
 ```
 
+### Conditioning ablation for the reviewer response
+
+Use `scripts/conditioning_ablation.py` to prepare, run/resume, and summarize the
+final checkpoint's normal, shuffled, and null conditioning comparisons. The
+[experiment protocol](docs/conditioning_ablation.md) documents the fixed cohort,
+paired noise, spatially separated donors, the existing metrics, optional repeats,
+GPU commands, and manuscript integration. This supersedes the quick probe for
+publication analysis; it does not change the original training workflow.
+
 ## Contact
 
 Authors: Tessa Cannon, Michel Tsamados, Petru Manescu, Thomas Newman, Christian Haas, Veit Helm, and Weibin Chen.

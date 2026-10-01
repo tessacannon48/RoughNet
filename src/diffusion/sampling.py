@@ -67,7 +67,7 @@ def p_sample_loop_ddim(model, scheduler, shape, cond, attrs, device, eta=0.0):
     return x
 
 
-def p_sample_loop_plms(model, scheduler, shape, cond, attrs, device, order=4):
+def p_sample_loop_plms(model, scheduler, shape, cond, attrs, device, order=4, initial_noise=None):
     """
     PLMS sampling method.
     Args:
@@ -75,9 +75,15 @@ def p_sample_loop_plms(model, scheduler, shape, cond, attrs, device, order=4):
         scheduler: The diffusion scheduler.
         ...
         order: The order of the PLMS method (typically 4).
+        initial_noise: Optional x_T for paired evaluations; cloned before use.
     """
     # Start from pure random noise x_t
-    x = torch.randn(shape).to(device)
+    if initial_noise is None:
+        x = torch.randn(shape).to(device)
+    else:
+        if tuple(initial_noise.shape) != tuple(shape):
+            raise ValueError("initial_noise must match the requested sample shape")
+        x = initial_noise.to(device).clone()
     
     # Store previous noise predictions for PLMS
     prev_eps = []
