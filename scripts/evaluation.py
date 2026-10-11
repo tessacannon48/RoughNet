@@ -1,6 +1,7 @@
 #evaluation.py 
 
-import os, sys, json, glob, time, argparse
+import os, sys, json, glob, time, argparse, hashlib, io
+from pathlib import Path
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -66,14 +67,15 @@ def get_region_preset(region_name: str, model_type: str = "cosine", root: str = 
 
     out_prefix = "final_val" if key in ("pondinlet", "tuk") else "final_test"
 
+    run_name = "original_clean" if model_type == "cosine" else "original_clean_linear"
     return {
         "region_key": key,
         "pretty_name": pretty_name,
         "zone_ids": zone_ids,
-        "ckpt_path": os.path.join(root, "models", f"{model_type}_k6_att_best.pth"),
+        "ckpt_path": os.path.join(root, "models", run_name, f"{run_name}_best.pth"),
         "s2_dir": os.path.join(root, "input_data", f"s2_patches_{key}"),
         "lidar_dir": os.path.join(root, "input_data", f"lidar_patches_{key}"),
-        "out_dir": os.path.join(root, "figures", f"{model_type}_model", f"{out_prefix}_{key}"),
+        "out_dir": os.path.join(root, "figures", run_name, f"{out_prefix}_{key}"),
     }
 
 
@@ -81,7 +83,7 @@ def load_checkpoint(ckpt_path, device):
     ckpt_path = str(ckpt_path)
     if not os.path.exists(ckpt_path):
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
-    ckpt = torch.load(ckpt_path, map_location=device)
+    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     cfg = ckpt.get("config", None)
     state = ckpt["model_state_dict"]
     return state, cfg, ckpt
@@ -448,6 +450,157 @@ def build_demeaned_mosaics(pred_tiles_dir, gt_tiles_dir, out_dir):
 
 
 
+
+
+def _crop_to_valid(arr, mask, padding=10):
+    """Crop to the shared valid footprint, retaining a small white border."""
+    ys, xs = np.where(mask)
+    if len(xs) == 0:
+        return arr, (0, arr.shape[0], 0, arr.shape[1])
+    y0, y1 = max(0, ys.min() - padding), min(arr.shape[0], ys.max() + padding + 1)
+    x0, x1 = max(0, xs.min() - padding), min(arr.shape[1], xs.max() + padding + 1)
+    return arr[y0:y1, x0:x1], (y0, y1, x0, x1)
+
+
+def _rotate_and_crop(arr, angle, mask=None):
+    """Restore the historical NaN-safe display rotation (not a geospatial warp)."""
+    from scipy.ndimage import rotate
+    if abs(angle) < 0.5:
+        return arr
+    valid = np.isfinite(arr)
+    if mask is not None:
+        valid &= mask
+    rotated = rotate(np.where(valid, arr, 0), angle, reshape=True,
+                     order=1, mode="constant", cval=np.nan)
+    valid_rot = rotate(valid.astype(np.uint8), angle, reshape=True,
+                       order=0, mode="constant", cval=0)
+    return np.where(valid_rot > 0, rotated, np.nan)
+
+
+def build_cached_demeaned_mosaics(study_dir, region_key, checkpoint_path,
+                                 schedule="cosine", sampler="plms", max_tiles=None,
+                                 root=PROJECT_ROOT):
+    """Blend the exact scored residuals without inference or duplicate tile TIFFs.
+
+    Archive hashes and batch identities come from the completed study. LiDAR
+    raster headers supply the grid; manifest union bounds also include Sentinel-2
+    and must not be used for placing the target pixels. Both fields use the same
+    valid target mask and weights. Prediction means are preserved.
+    """
+    # The conditioning metric adapter imports this module; defer its IO helpers
+    # until the evaluator has finished defining the metric functions.
+    from src.utils.conditioning_ablation import sha256_file, json_digest
+    root = Path(root).resolve()
+    study_dir = Path(study_dir).resolve()
+    checkpoint_path = Path(checkpoint_path).resolve()
+    manifest = json.loads((study_dir / "manifest.json").read_text())
+    checkpoint = manifest["checkpoints"][schedule]
+    if sha256_file(checkpoint_path) != checkpoint["sha256"]:
+        raise ValueError("Cached predictions belong to a different checkpoint")
+    cohort = manifest["cohorts"][region_key]
+    all_records = cohort["records"]
+    all_ids = [r["id"] for r in all_records]
+    if not all_ids or len(set(all_ids)) != len(all_ids):
+        raise ValueError("Empty or duplicate mosaic cohort")
+    if max_tiles is not None and max_tiles <= 0:
+        raise ValueError("max_tiles must be positive")
+    records = all_records if max_tiles is None else all_records[:max_tiles]
+    batch_size = manifest["batch_size"]
+    manifest_digest = json_digest(manifest)
+    archives = {}
+    for start in range(0, len(records), batch_size):
+        path = study_dir / "shards" / f"{schedule}_{sampler}_{region_key}_{start:06d}.json"
+        shard = json.loads(path.read_text())
+        ids = all_ids[start:start + batch_size]
+        if shard["manifest_digest"] != manifest_digest or shard["ids"] != ids:
+            raise ValueError(f"Mosaic shard provenance differs: {path}")
+        if len(shard["archives"]) != len(ids):
+            raise ValueError(f"Missing mosaic archives: {path}")
+        for pid, archive in zip(ids, shard["archives"]):
+            expected = f"predictions/{schedule}/{sampler}/{region_key}/{pid}.npz"
+            if archive["path"] != expected:
+                raise ValueError(f"Wrong mosaic archive identity: {path}")
+            archives[pid] = archive
+
+    print(f"Reading grid for {len(records)} cached {region_key} patches...", flush=True)
+    grids = []
+    for record in tqdm(records, desc="LiDAR grid headers"):
+        lidar_file = record["files"][0]
+        path = root / lidar_file["path"]
+        stat = path.stat()
+        if (stat.st_size, stat.st_mtime_ns) != (lidar_file["size"], lidar_file["mtime_ns"]):
+            raise ValueError(f"LiDAR input changed since inference: {path}")
+        with rasterio.open(path) as src:
+            transform = src.transform
+            if transform.a <= 0 or transform.e >= 0 or transform.b != 0 or transform.d != 0:
+                raise ValueError("Mosaics require a north-up LiDAR grid")
+            grids.append((src.bounds, transform, src.crs, (src.height, src.width)))
+    _, first_transform, crs, _ = grids[0]
+    rx, ry = first_transform.a, -first_transform.e
+    for _, transform, tile_crs, _ in grids:
+        if tile_crs != crs or not np.allclose([transform.a, -transform.e], [rx, ry], rtol=0, atol=1e-9):
+            raise ValueError("LiDAR tiles have different CRS or pixel resolution")
+    west = min(g[0].left for g in grids)
+    south = min(g[0].bottom for g in grids)
+    east = max(g[0].right for g in grids)
+    north = max(g[0].top for g in grids)
+    width_float, height_float = (east - west) / rx, (north - south) / ry
+    if not np.allclose([width_float, height_float], np.round([width_float, height_float]), rtol=0, atol=1e-5):
+        raise ValueError("LiDAR tiles are not aligned to one pixel grid")
+    width, height = int(round(width_float)), int(round(height_float))
+    placements = []
+    for bounds, _, _, shape in grids:
+        offsets = np.array([(north - bounds.top) / ry, (bounds.left - west) / rx])
+        if not np.allclose(offsets, np.round(offsets), rtol=0, atol=1e-5):
+            raise ValueError("LiDAR tiles are not aligned to one pixel grid")
+        row, col = np.round(offsets).astype(int)
+        placements.append((slice(row, row + shape[0]), slice(col, col + shape[1])))
+    print(f"Blending residuals on {width} x {height} grid...", flush=True)
+    gt_sum = np.zeros((height, width), dtype=np.float64)
+    pred_sum = np.zeros_like(gt_sum)
+    weight_sum = np.zeros_like(gt_sum)
+    for record, grid, window in tqdm(zip(records, grids, placements), total=len(records), desc="Cached residuals"):
+        pid = record["id"]
+        archive = archives[pid]
+        path = study_dir / archive["path"]
+        content = path.read_bytes()
+        if hashlib.sha256(content).hexdigest() != archive["sha256"]:
+            raise ValueError(f"Cached prediction changed or is incomplete: {path}")
+        with np.load(io.BytesIO(content), allow_pickle=False) as data:
+            gt, pred, mask = data["gt"], data["prediction"], data["mask"].astype(bool)
+        if gt.shape != grid[3] or pred.shape != gt.shape or mask.shape != gt.shape:
+            raise ValueError(f"Cached array shape differs from LiDAR grid: {path}")
+        if not np.isfinite(gt[mask]).all() or not np.isfinite(pred[mask]).all() or not mask.any():
+            raise ValueError(f"Non-finite or empty valid residual field: {path}")
+        weights = _compute_distance_weights(gt.shape, valid_mask=mask)
+        weights = np.where(mask, weights, 0)
+        gt_sum[window] += np.where(mask, gt, 0) * weights
+        pred_sum[window] += np.where(mask, pred, 0) * weights
+        weight_sum[window] += weights
+    valid = weight_sum > 0
+    np.divide(gt_sum, weight_sum, out=gt_sum, where=valid)
+    np.divide(pred_sum, weight_sum, out=pred_sum, where=valid)
+    gt_sum[~valid] = np.nan
+    pred_sum[~valid] = np.nan
+    gt_array, pred_array = gt_sum.astype(np.float32), pred_sum.astype(np.float32)
+    del gt_sum, pred_sum, weight_sum
+    diff_array = pred_array - gt_array
+    provenance = {
+        "checkpoint": str(checkpoint_path), "checkpoint_sha256": checkpoint["sha256"],
+        "checkpoint_epoch": checkpoint.get("epoch"), "study": str(study_dir),
+        "manifest_sha256": manifest_digest, "region": region_key,
+        "split": cohort.get("split"), "schedule": schedule, "sampler": sampler,
+        "seed": manifest.get("seed"), "n_patches": len(records),
+        "subset_only": len(records) != len(all_records) or manifest.get("max_patches") is not None,
+        "patch_ids_sha256": json_digest([r["id"] for r in records]),
+        "crs": str(crs), "bounds": [west, south, east, north],
+        "shape": [height, width], "pixel_size": [rx, ry],
+        "mask": "same cached valid LiDAR mask for GT and prediction",
+        "blending": "distance-to-valid-boundary weights ** 4; minimum valid weight 0.001",
+        "reference": "cached residuals unchanged; no independent prediction demeaning",
+        "archive_checksums_verified": True,
+    }
+    return gt_array, pred_array, diff_array, provenance
 
 
 def plot_demeaned_color_relief(gt_dm_array, pred_dm_array, diff_dm_array, out_path, vmin=-0.5, vmax=0.5, manual_rotation=None, split_stack=False):
@@ -1123,6 +1276,22 @@ def main():
         help="Region key (lowercase, no spaces): 'pondinlet', 'tuk', or 'cambridge'.",
     )
     parser.add_argument(
+        "--checkpoint", type=Path,
+        help="Checkpoint override; defaults to the corrected original-fold best checkpoint.",
+    )
+    parser.add_argument(
+        "--mosaics-only", action="store_true",
+        help="Rebuild the final cosine PLMS PNG from scored cached residuals, without inference, TIFF exports or statistics.",
+    )
+    parser.add_argument(
+        "--cached-study", type=Path,
+        help="Completed noise/sampler study for --mosaics-only (default: reconstructions/noise_sampler_clean).",
+    )
+    parser.add_argument(
+        "--figure-dir", type=Path,
+        help="Destination for --mosaics-only PNGs and provenance (default: figures/final_figures).",
+    )
+    parser.add_argument(
         "--sampler",
         type=str,
         default="plms",
@@ -1216,7 +1385,10 @@ def main():
     region_key = preset["region_key"]
     region_name = preset["pretty_name"]
     zone_ids = preset["zone_ids"]
+    project_root = Path(args.root).resolve()
     CKPT_PATH = preset["ckpt_path"]
+    if args.checkpoint is not None:
+        CKPT_PATH = str(args.checkpoint if args.checkpoint.is_absolute() else project_root / args.checkpoint)
     TEST_S2_DIR = preset["s2_dir"]
     TEST_LIDAR_DIR = preset["lidar_dir"]
     base_out_dir = preset["out_dir"]
@@ -1231,14 +1403,49 @@ def main():
         args.rotation = REGION_ROTATIONS[region_key]
         print(f"Using default rotation for {region_name}: {args.rotation} degrees")
 
+    if args.mosaics_only:
+        from src.utils.conditioning_ablation import sha256_file, write_json
+        if args.model != "cosine" or args.sampler != "plms" or args.samplers is not None:
+            parser.error("--mosaics-only generates the selected cosine PLMS figures; use --model cosine --sampler plms")
+        if args.max_tiles is not None and args.figure_dir is None:
+            parser.error("Subset mosaics require --figure-dir so they cannot replace the full paper figures")
+        def project_path(value, default):
+            path = value if value is not None else Path(default)
+            return path if path.is_absolute() else project_root / path
+        study = project_path(args.cached_study, "reconstructions/noise_sampler_clean")
+        figure_dir = project_path(args.figure_dir, "figures/final_figures")
+        gt, pred, diff, provenance = build_cached_demeaned_mosaics(
+            study, region_key, CKPT_PATH, max_tiles=args.max_tiles, root=project_root,
+        )
+        if provenance["subset_only"] and args.figure_dir is None:
+            parser.error("A subset study requires a separate --figure-dir")
+        figure_dir.mkdir(parents=True, exist_ok=True)
+        figure = figure_dir / f"{region_key}_mosaic_2d_demeaned.png"
+        temporary_figure = figure.with_name(f".{figure.stem}.tmp.png")
+        split_stack = args.split_stack or region_key == "tuk"
+        plot_demeaned_color_relief(
+            gt, pred, diff, str(temporary_figure), vmin=-0.5, vmax=0.5,
+            manual_rotation=args.rotation, split_stack=split_stack,
+        )
+        provenance.update({
+            "figure": str(figure), "figure_sha256": sha256_file(temporary_figure),
+            "rotation_degrees": args.rotation, "split_stack": split_stack,
+            "display_range_m": [-0.5, 0.5], "dpi": 300,
+            "plot_source_sha256": sha256_file(__file__),
+        })
+        temporary_figure.replace(figure)
+        write_json(figure.with_suffix(".json"), provenance)
+        print(f"Saved {figure} from {provenance['n_patches']} cached patches; no inference required.")
+        return
+    if args.cached_study is not None or args.figure_dir is not None:
+        parser.error("--cached-study and --figure-dir require --mosaics-only")
+
     device = args.device
-    if torch.cuda.is_available():
-        device = "cuda"
-    else:
+    if device.startswith("cuda") and not torch.cuda.is_available():
         device = "cpu"
     print(f"Using device: {device}")
 
-    ckpt_tmp = torch.load(CKPT_PATH, map_location=device)
+    ckpt_tmp = torch.load(CKPT_PATH, map_location=device, weights_only=False)
     config = ckpt_tmp["config"]
 
     config["data"]["s2_dir"] = TEST_S2_DIR

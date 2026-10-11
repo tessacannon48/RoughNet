@@ -207,56 +207,180 @@ jupyter notebook patching.ipynb
 
 ### Training
 
-1. Edit config.yaml: 
-   - Specify directories to LiDAR and Sentinel-2
-   - Set default training parameters
-   - Set WANDB login
-2. Run main.py, specifying optional config changes in terminal:
+Run the following commands from `Dissertation/`, using a Python environment
+with the project dependencies installed and the paired patches in `input_data/`.
+The corrected splits retain the validation zones and exclude training neighbours
+whose combined LiDAR and six Sentinel-2 footprints intersect validation
+footprints. Zone IDs alone do not prevent overlap. No patch re-extraction is needed.
+
+Prepare the local footprint manifests:
+
 ```bash
-python Dissertation/scripts/main.py --context_k 1 --attention_variant mid --sampling_methods plms --lr 1e-4 --epochs 200 --unet_depth 4 --noise_schedule cosine --base_channels 64 --loss_name masked_hybrid_mse_loss --loss_alpha 1.0 --evaluate --run_name final_improved_baseline
+python scripts/prepare_spatial_splits.py
 ```
-- Outputs trained model, reconstruction figure, and patch-wise reconstruction statistics
+
+This creates the two full split manifests, compact ID assignments and cosine
+training configurations under `splits/`. The full JSON manifests record local
+file sizes and timestamps and are excluded from Git; retain the manifest used
+for each checkpoint. Preparation refuses to replace a different existing full
+manifest. The committed compact IDs provide portable sample membership.
+
+| Configuration | Training regions | Train / validation | Held-out test |
+|---|---|---:|---|
+| `original_clean` | Pond Inlet + Tuktoyaktuk | 11,076 / 1,290 | Cambridge Bay: 2,111 |
+| `original_clean_linear` | Pond Inlet + Tuktoyaktuk | 11,076 / 1,290 | Cambridge Bay: 2,111 |
+| `tuk_heldout_clean` | Pond Inlet + Cambridge Bay | 11,589 / 1,333 | Tuktoyaktuk: 1,676 |
+
+The configurations freeze six randomized context views, depth 4, 64 base
+channels, mid attention, hybrid masked MSE with alpha 1, learning rate 1e-4,
+batch size 8 and 200 epochs. Only `original_clean_linear` uses the linear
+schedule; the other two use cosine. Each model is trained from scratch and
+selected by source-region validation loss.
+
+```bash
+bash scripts/train_clean_fold.sh original_clean
+bash scripts/train_clean_fold.sh original_clean_linear
+bash scripts/train_clean_fold.sh tuk_heldout_clean
+```
+
+The training wrapper uses `../.venv-py313/bin/python`, disables W&B uploads,
+locks each fold against duplicate writers and appends a local training log.
+With an interpreter installed elsewhere, invoke the training CLI directly;
+replace the configuration filename for the other folds:
+
+```bash
+WANDB_MODE=disabled python -u scripts/main.py --config splits/original_clean.yaml --resume
+```
+
+Rerunning the same command resumes from the latest completed epoch with the
+saved optimizer and RNG state. Keep the configuration and split unchanged.
+Use `models/<fold>/<fold>_best.pth` for inference; `_latest.pth` holds recovery
+state. Full evaluation is a separate step.
+
+For baseline collaborators, share the tracked
+[training and evaluation split guide](docs/baseline_data_split.md) and
+[splits/train_val_split_ids.json](splits/train_val_split_ids.json). Fit weights
+and learned preprocessing on `train` IDs only, select on `validation`, and
+evaluate Cambridge Bay after choices are fixed. Excluded IDs are not training
+samples. The alternate fold's assignments are in
+[splits/tuk_heldout_clean_ids.json](splits/tuk_heldout_clean_ids.json).
 
 ### Evaluation
 
-The `evaluation.py` script performs **region-wide inference**, **mosaicking**, **figure generation** (demeaned 2D mosaics and PDFs), and **metric computation** (per-patch and region-level).
+`scripts/evaluation.py` performs inference, mosaicking, figure generation and
+metric computation. Its default cosine checkpoint is now
+`models/original_clean/original_clean_best.pth`; `--model linear` selects the
+corrected linear checkpoint. Use `--checkpoint PATH` to override it and
+`--root PATH` when running outside the directory containing `models/` and
+`input_data/`. Fresh inference outputs go under `figures/original_clean/`
+(or `figures/original_clean_linear/`) rather than the historical figure folders.
 
-Each evaluation run is configured by selecting a **region preset** using the `--region` argument.  
-All file paths (Sentinel-2 patches, LiDAR patches, model checkpoint, output directory) and any region filtering (e.g., `zone_ids=[4]` for Pond Inlet) are handled automatically through the preset system.
+To regenerate the three paper mosaics from the completed cosine PLMS evaluation,
+run from `Dissertation/`:
 
-Before running: At the top of `evaluation.py`, inside the `get_region_preset()` function:
-
-- **Update the `root` directory path** if needed  
-- **Update the model checkpoint path** (`ckpt_path`)  
-- **Optionally adjust region-specific dataset paths** if your directory structure changes  
-
-Example runs: 
-
-#### Validation region 1 – Pond Inlet, zone_ids=[4]
 ```bash
-python evaluation.py --region pondinlet
-```
-#### Validation region 2 – Tuktoyaktuk, zone_ids=[13]
-```bash
-python evaluation.py --region tuk
-```
-#### Test region – Cambridge Bay, all tiles
-```bash
-python evaluation.py --region cambridge
-```
-#### Reuse existing mosaics for Pond Inlet
-```bash
-python evaluation.py --region pondinlet --skip-predict
+python scripts/evaluation.py --region tuk --mosaics-only
+python scripts/evaluation.py --region cambridge --mosaics-only
+python scripts/evaluation.py --region pondinlet --mosaics-only
 ```
 
-### Conditioning ablation for the reviewer response
+This uses `reconstructions/noise_sampler_clean/` and checks the checkpoint,
+cached archive hashes, cohort identities and LiDAR grids. It runs on CPU,
+without sampling again or exporting duplicate patch TIFFs. The cohorts are
+168 Tuktoyaktuk validation patches (zone 13), 1,122 Pond Inlet validation
+patches (zone 4) and all 2,111 Cambridge Bay test patches. It writes
+`figures/final_figures/{region}_mosaic_2d_demeaned.png` and a JSON provenance
+record beside each image. Override these locations with `--cached-study PATH`
+and `--figure-dir PATH`.
 
-Use `scripts/conditioning_ablation.py` to prepare, run/resume, and summarize the
-final checkpoint's normal, shuffled, and null conditioning comparisons. The
-[experiment protocol](docs/conditioning_ablation.md) documents the fixed cohort,
-paired noise, spatially separated donors, the existing metrics, optional repeats,
-GPU commands, and manuscript integration. This supersedes the quick probe for
-publication analysis; it does not change the original training workflow.
+The cached fields are already patch-wise residuals. Both fields use the valid
+LiDAR mask and the existing distance-weighted overlap blending; the prediction
+mean is retained. This corrects the historical mosaic's inclusion of predicted
+pixels outside the valid LiDAR footprint. GT and predictions use the shared
+±0.5 m symmetric-log scale, and errors use a linear ±0.5 m scale. Rotations
+remain 90° for Pond Inlet/Tuktoyaktuk and 28° for Cambridge Bay; Tuktoyaktuk
+automatically uses the two-strip layout. `--rotation` and `--split-stack` are
+available for manual presentation changes.
+
+For fresh inference, omit `--mosaics-only`; for example,
+`python scripts/evaluation.py --region pondinlet --sampler plms`.
+`--skip-predict` reuses mosaics in that corrected model's output folder.
+The paper figure mode preserves the completed studies' manifests. Because
+the study runners hash source code, editing the evaluator does not permit
+resuming a historical study with the changed source revision.
+
+### Noise schedule and sampler evaluation
+
+The evaluation wrappers require CUDA and default to
+`../.venv-py313/bin/python`. Set `PYTHON_BIN` to the absolute path of another
+compatible interpreter when needed; this setting applies to evaluation
+wrappers, not the training wrapper. For example:
+
+```bash
+PYTHON_BIN=/absolute/path/to/python bash scripts/run_noise_sampler_ablation.sh validation
+```
+
+Compare corrected original-fold linear/cosine checkpoints with DDPM, DDIM and
+PLMS. All use 1,000 steps; DDIM eta is 0 and PLMS order is 4. Initial noise is
+paired across configurations using seed 42; DDPM innovations are paired across
+schedules for each fixed batch. Review validation results and freeze the
+selected configuration before evaluating Cambridge Bay:
+
+```bash
+bash scripts/run_noise_sampler_ablation.sh validation
+bash scripts/run_noise_sampler_ablation.sh test
+```
+
+Results appear in `reconstructions/noise_sampler_clean/{validation,test}/`:
+`comparison.csv`, `comparison.json`, `comparison.md` and `per_patch.csv`.
+Validation includes 1,122 Pond Inlet and 168 Tuktoyaktuk patches; test includes
+all 2,111 Cambridge Bay patches. Pooled summaries weight patches equally;
+equal-region averages must be calculated separately. The eight metrics remain
+RMSE, signed bias, sigma error, NAE, ZNCC, JSD, log-PSD RMSE and nRMSE/sigma.
+
+Evaluate the alternate fold with its frozen cosine PLMS configuration:
+
+```bash
+bash scripts/run_alternate_fold_evaluation.sh test
+```
+
+This uses `models/tuk_heldout_clean/tuk_heldout_clean_best.pth` and writes the
+same comparison filenames under
+`reconstructions/tuk_heldout_clean_evaluation/test/` for all 1,676 Tuktoyaktuk
+patches. The wrapper also accepts `validation` for the 1,122 Pond Inlet and
+211 Cambridge Bay source-validation patches.
+
+### Conditioning ablation
+
+Run normal, shuffled and zero conditioning with the corrected original-fold
+cosine checkpoint:
+
+```bash
+bash scripts/run_corrected_conditioning_ablation.sh
+```
+
+The wrapper verifies the training-split digest and evaluates all 1,122 Pond
+Inlet validation, 168 Tuktoyaktuk validation and 2,111 Cambridge Bay test
+patches with 1,000-step PLMS and paired initial noise, seed 42. Shuffling moves
+all six images and their metadata together to a spatially separated donor
+within the same region and split. Null conditioning zeros both images and
+attributes; it is not a separately trained unconditional model.
+
+Outputs under `reconstructions/conditioning_ablation_clean/` include
+`summary.csv`, `summary.json`, `per_patch.csv`, `paired_deltas.csv`, `table.tex`
+and float32 prediction archives. Use this wrapper for the corrected study;
+the older generic preparation defaults refer to the historical checkpoint.
+
+All three evaluation wrappers prepare a study only when its manifest is
+absent, verify completed batches and skip them on restart. Interrupted batches
+are recomputed. Keep each study's inputs, checkpoint, source revision, batch
+settings and recorded GPU/software environment unchanged when resuming.
+Retain the complete study directory, including prediction archives and shards.
+Use a fresh study directory on a different runtime; do not combine partial
+results from incompatible manifests. The Cambridge matrix, alternate-fold
+test and conditioning study can run concurrently on separate GPUs, selected
+with `CUDA_VISIBLE_DEVICES`, or on separate machines with their own study
+directories.
 
 ## Contact
 
