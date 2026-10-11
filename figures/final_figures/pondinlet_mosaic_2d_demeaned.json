@@ -1,0 +1,44 @@
+{
+  "archive_checksums_verified": true,
+  "blending": "distance-to-valid-boundary weights ** 4; minimum valid weight 0.001",
+  "bounds": [
+    594019.7059493422,
+    8069238.755047917,
+    596835.7059493422,
+    8078966.755047917
+  ],
+  "checkpoint": "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/models/original_clean/original_clean_best.pth",
+  "checkpoint_epoch": 166,
+  "checkpoint_sha256": "53f42e1075573b4367b7cb7a12ee617fa0d43691ae0163a9305b858a0a5b047c",
+  "crs": "EPSG:32617",
+  "display_range_m": [
+    -0.5,
+    0.5
+  ],
+  "dpi": 300,
+  "figure": "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/figures/final_figures/pondinlet_mosaic_2d_demeaned.png",
+  "figure_sha256": "53729999db63ff8ebc44eb0995d0ba37d60b61ccd4b67ea4a4d6bb0f9bf73283",
+  "manifest_sha256": "08f23443854b2528838548c766c9f1926afba2230bd8e3688a151d3b36c633d3",
+  "mask": "same cached valid LiDAR mask for GT and prediction",
+  "n_patches": 1122,
+  "patch_ids_sha256": "e149465f52bff75cbc725f4d3266482c5d55422ad513c8e73efdeb8da1db3965",
+  "pixel_size": [
+    1.0,
+    1.0
+  ],
+  "plot_source_sha256": "32f0ba1dd2b5ba6dc2224d5824529d8fb2de33053c19e3d5ba0e51ea9d4cf8b8",
+  "reference": "cached residuals unchanged; no independent prediction demeaning",
+  "region": "pondinlet",
+  "rotation_degrees": 90,
+  "sampler": "plms",
+  "schedule": "cosine",
+  "seed": 42,
+  "shape": [
+    9728,
+    2816
+  ],
+  "split": "validation",
+  "split_stack": false,
+  "study": "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/reconstructions/noise_sampler_clean",
+  "subset_only": false
+}
