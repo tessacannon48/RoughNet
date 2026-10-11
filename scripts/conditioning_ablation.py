@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import fcntl
 import datetime
 import json
 import os
@@ -217,9 +218,9 @@ def run(args):
                     validate_shard(shard, manifest, runtime, region, seed, target_ids, out)
                     continue
                 lock = path.with_suffix(".lock")
-                # A crashed job leaves a lock: inspect/remove that lock before resuming.
-                with lock.open("x") as f:
-                    f.write(f"pid={os.getpid()}\n")
+                # OS locks release on process exit, including an interrupted job.
+                lock_handle = lock.open("a+")
+                fcntl.flock(lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 try:
                     before = time.monotonic()
                     target = default_collate([dataset[i] for i in range(start, start+len(target_ids))])
@@ -252,7 +253,7 @@ def run(args):
                     write_json(path, {"runtime_sha256": json_digest(runtime), "rows": rows, "elapsed_s": elapsed, "archives": archives})
                     print(f"{region} seed={seed}: {start+len(target_ids)}/{len(ids)} patches ({elapsed:.1f}s)", flush=True)
                 finally:
-                    lock.unlink()
+                    lock_handle.close()
                 completed_batches += 1
                 if args.max_batches is not None and completed_batches >= args.max_batches:
                     print("Stopped after requested batch limit; rerun without --max-batches to resume.", flush=True)
