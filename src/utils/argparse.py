@@ -12,6 +12,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description='Train diffusion model for LiDAR generation')
 
     # Core argument: path to the config file
+    parser.add_argument("--resume", nargs="?", const="auto", default=None, help="Resume latest completed epoch; optionally specify a trusted checkpoint")
     parser.add_argument('--config', type=str, default='config.yaml',
                         help='Path to the YAML configuration file')
 

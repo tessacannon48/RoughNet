@@ -43,3 +43,7 @@ old_stuff/
 
 # Local data
 input_data/
+
+# Rebuildable local footprint inventories (include filesystem timestamps)
+/splits/original_clean.json
+/splits/tuk_heldout_clean.json

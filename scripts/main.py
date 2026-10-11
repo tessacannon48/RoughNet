@@ -25,6 +25,8 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 # Import modules
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.utils.argparse import parse_arguments
+from src.utils.spatial_split import load_training_split
+from src.utils.training_state import atomic_save, rng_state, restore_rng, resume_signature
 from src.data.dataset import LidarS2Dataset
 from src.model.unet import ConditionalUNet
 from src.diffusion.scheduler import LinearDiffusionScheduler, CosineDiffusionScheduler
@@ -45,7 +47,7 @@ from src.utils.recon_metrics import (
 # TRAINING FUNCTION
 # =============================================================================
 
-def train_model(config):
+def train_model(config, resume=None):
     """Unified training function with early stopping."""
     
     # Set device
@@ -67,6 +69,12 @@ def train_model(config):
         wandb_name = f"{config['logging']['run_name']}_k{config['training']['context_k']}_{attention_flag}{f'_{debug_suffix}' if debug_suffix else ''}"
         config["logging"]["wandb_name"] = wandb_name
     
+    wandb_name = config["logging"]["wandb_name"]
+    latest_path = os.path.join(save_dir, f"{wandb_name}_latest.pth")
+    best_path = os.path.join(save_dir, f"{wandb_name}_best.pth")
+    if resume is None and (os.path.exists(latest_path) or os.path.exists(best_path)):
+        raise FileExistsError("Run already has checkpoints; use --resume or a new run directory")
+
     wandb.init(
         project=config["logging"]["wandb_project"],
         name=config["logging"]["wandb_name"],
@@ -88,40 +96,44 @@ def train_model(config):
     # Select the loss function
     criterion = loss_functions.get(loss_name)
 
-    # Load all patch IDs and their regions from multiple S2 dirs
-    all_patch_ids = []
-    for s2_dir in config["data"]["s2_dirs"]:
-        patch_ids = [os.path.basename(p).split('_')[-1].split('.')[0] 
-                    for p in glob.glob(os.path.join(s2_dir, "s2_patch_*")) if os.path.isdir(p)]
-        all_patch_ids.extend(patch_ids)
-    train_pids = []
-    val_pids = []
-    
-    # Get regions to use as validation from config
-    validation_regions = []
-    for region in config["data"]["validation_regions"]:
-        validation_regions.append(region)
-    
-    print("Separating patches by region...")
-    for pid in tqdm(all_patch_ids):
+    if config["data"].get("split_manifest"):
+        train_pids, val_pids = load_training_split(config["data"]["split_manifest"], config)
+        print(f"Verified manifest: {len(train_pids)} train, {len(val_pids)} validation")
+    else:
+        # Load all patch IDs and their regions from multiple S2 dirs
+        all_patch_ids = []
         for s2_dir in config["data"]["s2_dirs"]:
-            region_path = os.path.join(s2_dir, f"s2_patch_{pid}", "region.json")
-            if os.path.exists(region_path):
-                with open(region_path, 'r') as f:
-                    region_data = json.load(f)
-                region_id = region_data.get("region_id", -1)
+            patch_ids = [os.path.basename(p).split('_')[-1].split('.')[0]
+                        for p in glob.glob(os.path.join(s2_dir, "s2_patch_*")) if os.path.isdir(p)]
+            all_patch_ids.extend(patch_ids)
+        train_pids = []
+        val_pids = []
+    
+        # Get regions to use as validation from config
+        validation_regions = []
+        for region in config["data"]["validation_regions"]:
+            validation_regions.append(region)
+    
+        print("Separating patches by region...")
+        for pid in tqdm(all_patch_ids):
+            for s2_dir in config["data"]["s2_dirs"]:
+                region_path = os.path.join(s2_dir, f"s2_patch_{pid}", "region.json")
+                if os.path.exists(region_path):
+                    with open(region_path, 'r') as f:
+                        region_data = json.load(f)
+                    region_id = region_data.get("region_id", -1)
 
-                if region_id in validation_regions: # Specify validation regions
-                    val_pids.append(pid)
-                else:
-                    train_pids.append(pid)
+                    if region_id in validation_regions: # Specify validation regions
+                        val_pids.append(pid)
+                    else:
+                        train_pids.append(pid)
+                    break
+            # break early when in debug mode
+            if config["system"]["debug"] and len(train_pids) >= 100 and len(val_pids) >= 8:
                 break
-        # break early when in debug mode
-        if config["system"]["debug"] and len(train_pids) >= 100 and len(val_pids) >= 8:
-            break
             
-    print(f"Number of training patches: {len(train_pids)}")
-    print(f"Number of validation patches (Regions {', '.join(map(str, validation_regions))}): {len(val_pids)}")
+        print(f"Number of training patches: {len(train_pids)}")
+        print(f"Number of validation patches (Regions {', '.join(map(str, validation_regions))}): {len(val_pids)}")
     
     # Create training and validation datasets using the pre-defined patch IDs
     train_dataset = LidarS2Dataset(
@@ -146,6 +158,11 @@ def train_model(config):
         split="val"
     )
     
+    if config["data"].get("split_manifest"):
+        for dataset, expected in ((train_dataset, train_pids), (val_dataset, val_pids)):
+            if [r['tile_id'] for r in dataset.samples] != expected:
+                raise ValueError("Dataset dropped/reordered manifest patches; refusing training")
+
     # Set dataset split tags 
     train_dataset.split = "train"
     val_dataset.split = "val"
@@ -164,7 +181,7 @@ def train_model(config):
         val_dataset,
         batch_size=config["training"]["batch_size"],
         shuffle=False,
-        num_workers=config["training"]["num_workers"] // 2 if config["training"]["num_workers"] > 1 else 1
+        num_workers=config["training"]["num_workers"] // 2 if config["training"]["num_workers"] > 1 else config["training"]["num_workers"]
     )
 
     # Initialize model
@@ -195,8 +212,42 @@ def train_model(config):
     # Initialize a list to store epoch durations
     epoch_durations = []
 
-    # Training loop
-    for epoch in range(max_epochs): 
+    start_epoch = 0
+    best_state = None
+    if resume is not None:
+        resume_path = latest_path if resume == "auto" else resume
+        if os.path.exists(resume_path):
+            state = torch.load(resume_path, map_location='cpu', weights_only=False)
+            if state.get('resume_signature') != resume_signature(config):
+                raise ValueError("Resume configuration or split differs from checkpoint")
+            model.load_state_dict(state['model_state_dict'])
+            optimizer.load_state_dict(state['optimizer_state_dict'])
+            start_epoch = state['epoch']
+            best_val_loss = state['best_val_loss']
+            patience_counter = state['patience_counter']
+            train_losses = state['train_losses']
+            epoch_durations = state['epoch_durations']
+            best_state = state['best_state']
+            if best_state is not None:
+                atomic_save(best_state, best_path)
+            restore_rng(state['rng_state'])
+            print(f"Resuming after completed epoch {start_epoch}")
+            del state
+        elif resume != "auto":
+            raise FileNotFoundError(resume_path)
+        elif os.path.exists(best_path):
+            raise ValueError("Best checkpoint exists without latest; refusing fresh overwrite")
+
+    if start_epoch == 0:
+        atomic_save(dict(epoch=0, model_state_dict=model.state_dict(),
+                         optimizer_state_dict=optimizer.state_dict(), config=config,
+                         resume_signature=resume_signature(config), best_val_loss=best_val_loss,
+                         patience_counter=patience_counter, train_losses=train_losses,
+                         epoch_durations=epoch_durations, best_state=best_state,
+                         rng_state=rng_state()), latest_path)
+
+    # Training loop: DataLoader workers are recreated each epoch (no persistent workers).
+    for epoch in range(start_epoch, max_epochs):
         
         model.train()
         epoch_start_time = time.perf_counter()
@@ -269,6 +320,8 @@ def train_model(config):
                 total_val_loss += batch_val_loss.item()
 
         avg_val_loss = total_val_loss / len(val_loader)
+        if not np.isfinite(avg_loss) or not np.isfinite(avg_val_loss):
+            raise FloatingPointError("Non-finite loss; latest completed epoch remains available")
 
         # End of epoch timing
         epoch_end_time = time.perf_counter()
@@ -306,11 +359,22 @@ def train_model(config):
                 'val_loss': avg_val_loss,
                 'config': config
             }
-            torch.save(checkpoint, best_path)
+            best_state = {**checkpoint, 'model_state_dict': {
+                k: v.detach().cpu().clone() for k, v in model.state_dict().items()}}
+            # Optimizer state belongs in latest, not the inference-only best copy.
+            best_state.pop('optimizer_state_dict')
+            atomic_save(best_state, best_path)
             print(f"New best model saved with val_loss: {best_val_loss:.4f}")
         else:
             patience_counter += 1
             print(f"Epoch {epoch+1}: No improvement. Patience: {patience_counter}/{patience}")
+
+        atomic_save(dict(epoch=epoch+1, model_state_dict=model.state_dict(),
+                         optimizer_state_dict=optimizer.state_dict(), config=config,
+                         resume_signature=resume_signature(config),
+                         best_val_loss=best_val_loss, patience_counter=patience_counter,
+                         train_losses=train_losses, epoch_durations=epoch_durations,
+                         best_state=best_state, rng_state=rng_state()), latest_path)
 
         if patience_counter >= patience:
             print(f"Early stopping triggered after {epoch + 1} epochs.")
@@ -327,7 +391,7 @@ def train_model(config):
     # Run reconstruction evaluation 
     if config["evaluation"]["evaluate"]:
         print(f"Loading best model from {final_model_path} for evaluation...")
-        best_checkpoint = torch.load(final_model_path, map_location=device)
+        best_checkpoint = torch.load(final_model_path, map_location=device, weights_only=False)
         model.load_state_dict(best_checkpoint['model_state_dict'])
         print(f"Best model loaded (epoch {best_checkpoint['epoch']}, val_loss: {best_checkpoint['val_loss']:.4f})")
         
@@ -770,7 +834,7 @@ if __name__ == "__main__":
     print("\nStarting training...")
     
     # Train model
-    results = train_model(config)
+    results = train_model(config, resume=args.resume)
     
     print("\nTraining complete!")
     print(f"Best model saved to: {results[list(results.keys())[0]]['model_path']}")

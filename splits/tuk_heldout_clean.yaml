@@ -1,0 +1,56 @@
+data:
+  train_locations:
+  - pondinlet
+  - cambridge
+  validation_regions:
+  - 4
+  - 4
+  evaluation_patch_ids: []
+  s2_dirs:
+  - input_data/s2_patches_pondinlet
+  - input_data/s2_patches_cambridge
+  lidar_dirs:
+  - input_data/lidar_patches_pondinlet
+  - input_data/lidar_patches_cambridge
+  pixel_size_m: 1.0
+  split_manifest: splits/tuk_heldout_clean.json
+training:
+  batch_size: 8
+  epochs: 200
+  lr: 0.0001
+  timesteps: 1000
+  noise_schedule: cosine
+  num_workers: 16
+  context_k: 6
+  randomize_context: true
+  loss:
+    name: masked_hybrid_mse_loss
+    alpha: 1.0
+model:
+  unet_depth: 4
+  base_channels: 64
+  embed_dim: 256
+  attention_variant: mid
+logging:
+  wandb_project: rough_net
+  wandb_name: tuk_heldout_clean
+  run_name: tuk_heldout_clean
+  save_dir: models/tuk_heldout_clean
+  output_dir: reconstructions/tuk_heldout_clean
+evaluation:
+  sampling_methods:
+  - plms
+  evaluate: false
+  eval_index_json: fixed_eval.json
+  jsd_scales_m:
+  - 1.0
+  - 2.0
+  - 5.0
+  - 10.0
+  jsd_bins: 256
+  nae_use_sobel: true
+  nae_degrees: true
+  psd_window: true
+system:
+  device: cuda
+  debug: false
