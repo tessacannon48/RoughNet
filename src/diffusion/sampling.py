@@ -4,8 +4,13 @@ import torch
 # SAMPLING METHODS
 # =============================================================================
 
-def p_sample_loop_ddpm(model, scheduler, shape, cond, attrs, device):
-    x = torch.randn(shape).to(device)
+def p_sample_loop_ddpm(model, scheduler, shape, cond, attrs, device, initial_noise=None, generator=None):
+    if initial_noise is None:
+        x = torch.randn(shape).to(device)
+    else:
+        if tuple(initial_noise.shape) != tuple(shape):
+            raise ValueError("initial_noise must match the requested sample shape")
+        x = initial_noise.to(device).clone()
 
     for t in reversed(range(scheduler.timesteps)):
         t_batch = torch.full((x.size(0),), t, device=device, dtype=torch.long)
@@ -19,7 +24,8 @@ def p_sample_loop_ddpm(model, scheduler, shape, cond, attrs, device):
         
         # Sample from the posterior distribution
         if t > 0:
-            noise = torch.randn_like(x)
+            noise = (torch.randn_like(x) if generator is None else
+                     torch.randn(x.shape, device=device, dtype=x.dtype, generator=generator))
             var = scheduler.posterior_variance[t]
             x = mean + torch.sqrt(var) * noise
         else:
@@ -28,10 +34,15 @@ def p_sample_loop_ddpm(model, scheduler, shape, cond, attrs, device):
     return x
 
 
-def p_sample_loop_ddim(model, scheduler, shape, cond, attrs, device, eta=0.0):
+def p_sample_loop_ddim(model, scheduler, shape, cond, attrs, device, eta=0.0, initial_noise=None):
     """DDIM sampling method."""
     # Start from pure random noise x_t
-    x = torch.randn(shape).to(device)
+    if initial_noise is None:
+        x = torch.randn(shape).to(device)
+    else:
+        if tuple(initial_noise.shape) != tuple(shape):
+            raise ValueError("initial_noise must match the requested sample shape")
+        x = initial_noise.to(device).clone()
 
     # DDIM works by skipping timesteps, so we need to define the sampling steps
     timesteps = list(reversed(range(scheduler.timesteps)))
