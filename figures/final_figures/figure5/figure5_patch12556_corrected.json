@@ -1,0 +1,133 @@
+{
+  "analysis_manifest_sha256": "259dbbafafca9e2c593bdf2acaa1f023753ce1e59217d53229259d4521c496a5",
+  "files": {
+    "figure5_patch12556_corrected.pdf": "ae5bf9a23751b1fb48fe316d936f0cad06903f1b4274ef9ec6a734f33c10c3c9",
+    "figure5_patch12556_corrected.png": "b8f3e3e25c8e3bcd70b448b3276cb9be8df5d79676b4c56bebe226fe45a445c7"
+  },
+  "interpretation": "Illustrative centered shape diagnostics; not a replacement for frozen paper metrics",
+  "panel_data": null,
+  "plotting_source_sha256": "b3ed7fd8f3f4a4192d6fba0f39309224a1c851a9721c6d0806984cd371811308",
+  "scope": "full",
+  "style": {
+    "best_fit_line_width": 3,
+    "colormap": "RdBu_r",
+    "confusion_colormap": "Blues",
+    "density_ylim": [
+      0.001,
+      20
+    ],
+    "density_yscale": "log",
+    "dpi": 300,
+    "elevation_limit_m": 0.5,
+    "elevation_linthresh_m": 0.1,
+    "elevation_norm": "symlog",
+    "extended_panel_f": "roughness_classes",
+    "extended_roughness_figsize": [
+      18,
+      5.5
+    ],
+    "extended_structure_figsize": [
+      18,
+      5.5
+    ],
+    "extended_titles": [
+      "(a) Patch roughness amplitude",
+      "(b) Variogram effective range",
+      "(c) Pooled regional densities",
+      "(d) Distribution mismatch",
+      "(e) Best candidate family",
+      "(f) Roughness-class agreement"
+    ],
+    "extended_wpad": 2.5,
+    "family_colors": {
+      "Gamma": "magenta",
+      "Log-normal": "navy",
+      "Normal": "lightcoral",
+      "Skew": "forestgreen"
+    },
+    "font_family": "DejaVu Sans",
+    "font_size": 11,
+    "formats": [
+      "png",
+      "pdf"
+    ],
+    "grid_alpha": 0.25,
+    "gt_color": "black",
+    "histogram_bins": 120,
+    "hspace": 0.35,
+    "jsd_ylim": null,
+    "jsd_yscale": "log",
+    "legend_size": 9,
+    "line_width": 2,
+    "main_set": "corrected",
+    "metrics_box_edgecolor": "gray",
+    "metrics_box_facecolor": "whitesmoke",
+    "metrics_box_font_family": "monospace",
+    "metrics_box_font_size": 10,
+    "metrics_box_padding": 1.0,
+    "patch_density_titles": [
+      "LiDAR distribution",
+      "Prediction distribution"
+    ],
+    "patch_figsize": [
+      15,
+      15
+    ],
+    "patch_height_ratios": [
+      3.6,
+      2.0,
+      2.0
+    ],
+    "patch_id": "12556",
+    "patch_legend_location": "upper right",
+    "patch_map_titles": [
+      "LiDAR",
+      "RoughNet prediction"
+    ],
+    "patch_region": "tuk",
+    "pooled_xlim": [
+      -1,
+      2
+    ],
+    "pooled_ylim": [
+      0.0001,
+      30
+    ],
+    "prediction_color": "royalblue",
+    "region_colors": {
+      "cambridge": "#1baf7a",
+      "pondinlet": "#2a78d6",
+      "tuk": "#d62728"
+    },
+    "region_markers": {
+      "cambridge": "^",
+      "pondinlet": "o",
+      "tuk": "s"
+    },
+    "rotate_quarters": 1,
+    "roughness_width_ratios": [
+      1.15,
+      1.15,
+      1
+    ],
+    "scatter_alpha": 0.35,
+    "scatter_size": 10,
+    "show_legend": true,
+    "show_titles": true,
+    "sigma_class_edges_m": [
+      0.05,
+      0.1,
+      0.2
+    ],
+    "sigma_class_labels": [
+      "Smooth <5 cm",
+      "Low 5\u201310 cm",
+      "Moderate 10\u201320 cm",
+      "Rough \u226520 cm"
+    ],
+    "sigma_limits_cm": null,
+    "title_size": 13,
+    "variogram_title": "Empirical points and exponential fits",
+    "wspace": 0.3
+  }
+}
