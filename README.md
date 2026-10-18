@@ -230,17 +230,32 @@ manifest. The committed compact IDs provide portable sample membership.
 | `original_clean` | Pond Inlet + Tuktoyaktuk | 11,076 / 1,290 | Cambridge Bay: 2,111 |
 | `original_clean_linear` | Pond Inlet + Tuktoyaktuk | 11,076 / 1,290 | Cambridge Bay: 2,111 |
 | `tuk_heldout_clean` | Pond Inlet + Cambridge Bay | 11,589 / 1,333 | Tuktoyaktuk: 1,676 |
+| `pondinlet_heldout_clean` | Cambridge Bay + Tuktoyaktuk | 3,043 / 379 | Pond Inlet: 11,197 |
+
+Prepare the third geographic fold separately, retaining Cambridge validation
+zone 4 and Tuktoyaktuk validation zone 13:
+
+```bash
+python scripts/prepare_spatial_splits.py --folds pondinlet_heldout_clean
+```
+
+If `splits/original_clean.json` is available on the same input files, append
+`--inventory-manifest splits/original_clean.json` to reuse its audited geometry.
+All recorded input sizes and timestamps are verified before reuse. This prepares
+only the requested fold. Its full manifest remains local; portable assignments
+are saved in `splits/pondinlet_heldout_clean_ids.json`.
 
 The configurations freeze six randomized context views, depth 4, 64 base
 channels, mid attention, hybrid masked MSE with alpha 1, learning rate 1e-4,
 batch size 8 and 200 epochs. Only `original_clean_linear` uses the linear
-schedule; the other two use cosine. Each model is trained from scratch and
+schedule; all other configurations use cosine. Each model is trained from scratch and
 selected by source-region validation loss.
 
 ```bash
 bash scripts/train_clean_fold.sh original_clean
 bash scripts/train_clean_fold.sh original_clean_linear
 bash scripts/train_clean_fold.sh tuk_heldout_clean
+bash scripts/train_clean_fold.sh pondinlet_heldout_clean
 ```
 
 The training wrapper uses `../.venv-py313/bin/python`, disables W&B uploads,
@@ -266,6 +281,221 @@ samples. The alternate fold's assignments are in
 [splits/tuk_heldout_clean_ids.json](splits/tuk_heldout_clean_ids.json).
 
 ### Evaluation
+
+#### Figure 5 and regional roughness analysis
+
+The colleague's `notebooks/Fig5_Extended_RoughNet (1).ipynb` is adapted into
+`scripts/figure5_analysis.py` (data/provenance/recovery/exports),
+`scripts/fig5_statistics.py` (distribution, variogram and ACF calculations)
+and `scripts/plot_figure5.py` (single-patch and extended figures).
+Defaults read the scored corrected cosine PLMS caches: no GPU inference,
+Colab setup, downloads or duplicate prediction TIFFs are required.
+
+From `Dissertation/`, run:
+
+```bash
+bash scripts/run_figure5_analysis.sh
+```
+
+This prepares once, runs/resumes CPU analysis, summarizes and plots with a
+local log. Override worker count with `FIG5_WORKERS=4`; optional positional
+arguments select a config and a new analysis directory. To run each step:
+
+```bash
+../.venv-py313/bin/python scripts/figure5_analysis.py prepare
+OMP_NUM_THREADS=1 ../.venv-py313/bin/python scripts/figure5_analysis.py run --workers 2
+../.venv-py313/bin/python scripts/figure5_analysis.py summarize
+../.venv-py313/bin/python scripts/plot_figure5.py
+```
+
+Analysis is resumable: rerun `run` after interruption. A process lock,
+input archive hashes, immutable analysis/source/runtime metadata and atomic
+per-patch files prevent mixing incompatible or partial results. Preparation
+requires exact corrected cohort membership (1,122 Pond validation, 168 Tuk
+validation, 2,111 Cambridge test); it checks the cached shard/manifest linkage.
+Input archive bytes are verified before analysis. Missing patches, invalid
+support or non-finite predictions fail explicitly. Fit failures are recorded
+without silently substituting an initial guess or dropping the patch.
+
+Outputs in `reconstructions/fig5_extended_clean/` include per-patch CSV,
+regional CSV/JSON/Markdown/LaTeX, patch representativeness percentiles,
+fit details, semivariograms and histograms. Regional RMS is
+`sqrt(mean(patch_sigma**2))`; fitted regional range comes from the mean
+**within-patch** semivariogram, not a mosaic or cross-patch variogram.
+Failed, upper-bound and beyond-observed-lag fits have explicit counts.
+Pooled histograms count overlapping pixels repeatedly and renormalize within
+the configured elevation interval; outside-interval fractions are reported.
+
+**Analysis differences from the notebook:** no default GT MAD clipping
+(`mad_k: null`) and no invented elevations or reduction of the target mask;
+the historical `mad_k: 50` remains configurable for a separate study.
+Shape PDFs/family fits/1 m JSD independently center GT and predictions, as in
+the notebook, but `rmse_residual_m` retains prediction mean error separately
+from `rmse_centered_m`. Neither the centered single-scale JS divergence
+(base 2) nor histogram-to-parametric-fit JS distance (natural-log square root)
+is the paper's existing multi-scale JSD. Keep their names and interpretations
+distinct. Best candidate fit is not evidence of universal log-normal recovery.
+Both figures reuse the saved regional numerical settings (2,000 sampled
+variogram locations and up to 5,000 distribution-fit values by default).
+The notebook's single-patch view instead used 5,000 variogram locations and
+all valid values for fitting; set these explicitly in a separate single-patch
+study to reproduce that sampling budget. Exponential effective range is the
+distance to approximately 95% of the partial sill (`1-exp(-3h/range)`).
+No IID patch-bootstrap confidence intervals are generated because patches
+overlap. Roughness classes and ridge fractions use unvalidated thresholds;
+the ridge summaries remain opt-in via `exploratory_proxies`, not downstream
+validation. Original panel (f), now panel (c) in the roughness figure, uses the notebook’s row-normalized roughness-class
+confusion matrix, computed directly from saved patch σ values without rerunning
+analysis. Its thresholds and labels are in the `style` block. Set
+`extended_panel_f: acf` to show ACF instead. The figure sidecar records pooled
+and per-region counts, accuracy and linear-weighted κ. Empty GT classes display
+no observations rather than a fabricated percentage.
+
+**Restyling:** edit only the `style` block in
+[configs/figure5.yaml](configs/figure5.yaml), then rerun `plot_figure5.py`.
+It exposes colours, region markers, fonts, font sizes, DPI/output formats,
+figure sizes, panel spacing, histogram bins, line widths, scatter opacity,
+map rotation, elevation normalization/limits and PDF limits. Default maps use
+the repository's `RdBu_r`, ±0.5 m and SymLog threshold 0.1 m. Set
+`elevation_norm: linear` to reproduce the notebook's linear colour mapping.
+Additional axis/title wording can be edited directly in the plotting script.
+The extended output is split into `figure5_extended_roughness_SET`
+(original a/c/f: amplitude, pooled PDFs, confusion matrix) and
+`figure5_extended_structure_SET` (original b/d/e: range, per-patch JSD,
+family preferences). Each has panels a/b/c and configurable
+`extended_roughness_figsize` / `extended_structure_figsize`. Panel titles in
+`extended_titles` retain their original six-panel order and are relabelled on
+export. Range legends include Spearman ρ; JSD uses the notebook’s logarithmic
+axis and highlighted-patch percentile (`jsd_yscale` / optional `jsd_ylim`).
+The star stays at the illustrative patch's data point; its description is in
+the upper-right legend (`patch_legend_location`). Regional colours are blue
+(Pond Inlet), red (Tuktoyaktuk) and green (Cambridge Bay). Neither extended
+figure has a bottom caption. `roughness_width_ratios` controls the relative
+panel widths, and the roughness figure aligns its bottom axis labels.
+The single-patch metrics box retains the notebook's rounded grey background
+and monospace layout; `metrics_box_*` settings control its appearance.
+Earlier `figure5_extended_SET` six-panel files are superseded by these two
+outputs.
+
+The three current publication figure stems are `figure5_patch12556_corrected`,
+`figure5_extended_roughness_corrected` and `figure5_extended_structure_corrected`,
+each exported as PNG/PDF plus a JSON provenance sidecar. Archive these nine
+files with the plotting code and configuration. The earlier six-panel
+`figure5_extended_corrected.*` files are historical outputs, not additional
+manuscript figures. Retain the source notebook alongside the scripts: analysis
+preparation records its checksum. Checkpoints, input data, analysis caches,
+logs and internal reviewer notes remain separate local artifacts.
+
+Style changes do not invalidate numerical results. Changes to `analysis`
+settings require `prepare --out NEW_DIRECTORY`; subsequent commands must
+receive that same `--out`. A prepared study uses its frozen analysis options,
+not later edits to the YAML. Figures default to
+`figures/final_figures/figure5/`, each with a hash/provenance sidecar.
+
+```bash
+# Regenerate just the illustrative patch, or only the regional extension:
+../.venv-py313/bin/python scripts/plot_figure5.py --kind patch
+../.venv-py313/bin/python scripts/plot_figure5.py --kind extended
+```
+
+For a bounded preview, use a separate analysis/figure directory:
+
+```bash
+../.venv-py313/bin/python scripts/figure5_analysis.py prepare --regions tuk --patch-ids 12556 --out /tmp/figure5-preview
+OMP_NUM_THREADS=1 ../.venv-py313/bin/python scripts/figure5_analysis.py run --workers 1 --out /tmp/figure5-preview
+../.venv-py313/bin/python scripts/figure5_analysis.py summarize --out /tmp/figure5-preview
+../.venv-py313/bin/python scripts/plot_figure5.py --out /tmp/figure5-preview --figure-dir /tmp/figure5-preview/figures
+```
+
+Subset outputs are labelled as such; do not use them as full regional results.
+Use `--max-patches N` on `run` for a timing probe within a prepared full study;
+summarization refuses incomplete studies. Worker count defaults to two,
+bounding the notebook's quadratic pair-distance memory cost.
+
+Optional historical/colleague GeoTIFF sets can be declared under `sets` in
+the YAML (see its commented example); `--config PATH` selects another YAML
+at preparation and plotting. Expected names are `lidar_patch_ID.tif` and
+`pred_ID.tif`. Set `prediction_domain` explicitly: `raw` subtracts the GT
+patch mean from both inputs, matching the notebook's added-mean exports;
+`residual` means predictions are already in residual space. Both inputs must
+share shape, transform and CRS. Joint finite support is required; missing
+predictions are not silently skipped. For Tuk-only sets select `--regions tuk`.
+Use `plot_figure5.py --set NAME` to plot another prepared set. Fresh diffusion
+ensembles are not launched: the notebook's automatic ten-member GPU run is
+not necessary to regenerate the corrected figures from the scored archives.
+
+#### Image-free empirical baseline
+
+Run this CPU-only baseline from `Dissertation/`:
+
+```bash
+bash scripts/run_image_free_baseline.sh
+```
+
+It draws one training LiDAR residual patch per Cambridge Bay test patch,
+uniformly with replacement using NumPy PCG64 seed 42. Donors come only from
+the corrected original training split. Fully observed, finite 256×256 donors
+are eligible: the local inventory has 7,742/9,811 Pond Inlet and 658/1,265
+Tuktoyaktuk training patches (8,400/11,076 total). Selection uses donor validity
+only, never test images, elevations, roughness or location matching. This is
+an empirical sampler of the **fully observed training subset**, not a claim
+to reproduce the unseen region's distribution. Coverage filtering changes
+the regional mixture; the saved donor audit makes that explicit.
+
+Each donor is demeaned over its own valid pixels using the dataset helper.
+It is not scaled, rotated, aligned, filled or re-demeaned on the target mask.
+All 2,111 Cambridge targets retain their original validity masks, so the same
+eight metric functions/settings and target support apply as in RoughNet.
+The default comparison reuses the complete corrected cosine PLMS test CSV.
+CPU arithmetic need not be bitwise identical to historical GPU arithmetic.
+One draw/seed supplies a baseline estimate, not confidence intervals.
+
+Preparation audits training masks and freezes assignments, split digest,
+input sizes/timestamps, metric settings and source hashes. If the reference
+evaluation module has changed, preparation recovers its exact hashed version
+from local Git history and verifies the two scoring functions and imported
+bindings are identical; other shared-source mismatches are rejected. Its
+reference snapshot/parity record is retained with the study. It reads no S2
+pixels or attributes and loads no model checkpoint.
+
+Outputs are in `reconstructions/image_free_baseline_clean/`: `manifest.json`,
+`assignments.csv`, `runtime.json`, score shards and `run.log`. Final
+`test/per_patch.csv` and `test/comparison.{csv,json,md}` contain all eight
+metrics and the side-by-side RoughNet means/population SDs. Predictions are
+reconstructible from the retained raw donors and assignments; no duplicate
+prediction rasters are written. Preserve those inputs with the study.
+Rerunning the wrapper verifies and skips completed batches. Changed inputs,
+sources or runtime cause rejection rather than silently mixing protocols.
+
+For a bounded benchmark after preparation:
+
+```bash
+../.venv-py313/bin/python scripts/image_free_baseline.py prepare
+../.venv-py313/bin/python scripts/image_free_baseline.py run --max-batches 2
+```
+
+The wrapper will reuse this preparation and completed batches. Run `prepare`
+only once. Optional source-region validation uses `prepare --split validation
+--out reconstructions/image_free_baseline_validation`; pass that same `--out`
+to `run` and `summarize`. Keep test and validation studies separate.
+
+For Cambridge Bay + Tuktoyaktuk training with Pond Inlet held out, run:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 bash scripts/run_pondinlet_fold_evaluation.sh test
+```
+
+This prepares a new study from `splits/pondinlet_heldout_clean.json` and
+`models/pondinlet_heldout_clean/pondinlet_heldout_clean_best.pth`, then evaluates
+all 11,197 held-out Pond Inlet patches. It retains cosine PLMS, 1,000 steps,
+seed 42, batch size 8 and the existing eight metrics. Preparation verifies
+input sizes/timestamps and the checkpoint's split digest. Outputs, saved
+predictions and logs go to `reconstructions/pondinlet_heldout_clean_evaluation/`;
+final test tables are in its `test/` directory. Rerun the same command after
+interruption to verify and skip completed batches. Resume requires matching
+recorded GPU/software, source files and inputs. Prepare on the inference
+machine; use `validation` instead of `test` for the 379 source validation
+patches. A launcher lock prevents concurrent preparation and evaluation.
 
 `scripts/evaluation.py` performs inference, mosaicking, figure generation and
 metric computation. Its default cosine checkpoint is now
