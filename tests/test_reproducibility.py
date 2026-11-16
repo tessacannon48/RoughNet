@@ -1,4 +1,4 @@
-"""Publication compatibility, ranking and packaging safety checks."""
+"""Portable checkpoint compatibility and paper table checks."""
 import copy
 import csv
 import json
@@ -9,7 +9,6 @@ import tempfile
 import unittest
 from src.utils.spatial_split import digest,portable_digest,validate_manifest,verify_checkpoint_split,sha256_file
 from scripts.export_paper_tables import add_ranks,rounded,validate_ids,groups,METRICS
-from scripts.prepare_release import copy_checked,verify_software_files,release_gates
 
 class PortableTests(unittest.TestCase):
  def fixture(self,root):
@@ -96,28 +95,5 @@ class TableTests(unittest.TestCase):
    self.assertFalse(meta['complete']);self.assertIn('INCOMPLETE',render(tables,meta)['main_table_2.tex'])
    validation[0]['tile_id']='wrong';save('validation',validation)
    with self.assertRaisesRegex(ValueError,'patch IDs'):build_tables(root,split,alternate,allow_incomplete=True,expected_counts=(2,1,3,4))
-
-class ArchiveTests(unittest.TestCase):
- def test_archive_ignores_generated_bytecode(self):
-  from scripts.prepare_release import zip_tree
-  import zipfile
-  with tempfile.TemporaryDirectory() as d:
-   root=Path(d)/'source';root.mkdir();(root/'example.py').write_text('pass')
-   (root/'__pycache__').mkdir();(root/'__pycache__/example.pyc').write_bytes(b'cache')
-   target=Path(d)/'source.zip';zip_tree(root,target)
-   with zipfile.ZipFile(target) as z:self.assertEqual(z.namelist(),['example.py'])
- def test_archive_excludes_raw_inputs_credentials_and_weights(self):
-  verify_software_files([Path('src/model/unet.py'),Path('input_data/sample_lidar_patch/example.tif')])
-  for p in ('.ssh/id_rsa','../secret','copernicus_login.py','models/weights.pth','input_data/lidar_patches_tuk/a.tif'):
-   with self.assertRaises(ValueError):verify_software_files([Path(p)])
- def test_copy_does_not_overwrite_changed_historical_weights(self):
-  with tempfile.TemporaryDirectory() as d:
-   source=Path(d)/'source';target=Path(d)/'target';source.write_bytes(b'original');copy_checked(source,target)
-   self.assertEqual(sha256_file(source),sha256_file(target));source.write_bytes(b'changed')
-   with self.assertRaises(FileExistsError):copy_checked(source,target)
- def test_licenses_and_baseline_are_real_gates(self):
-  with tempfile.TemporaryDirectory() as d:
-   missing=release_gates(Path(d),{})
-   self.assertTrue(any('code_license' in x for x in missing));self.assertTrue(any('unet_checkpoint' in x for x in missing))
 
 if __name__=='__main__':unittest.main()

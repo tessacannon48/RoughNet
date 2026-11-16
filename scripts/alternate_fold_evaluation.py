@@ -46,7 +46,7 @@ def main():
         p=sub.add_parser(name);p.add_argument('--out',type=Path,default=Path('reconstructions/roughnet_tuk_transfer'))
         if name=='prepare':
             p.add_argument('--data-root',type=Path)
-            p.add_argument('--checkpoint-registry',type=Path,default=Path('release/checkpoints.json'))
+            p.add_argument('--checkpoint-registry',type=Path,default=Path('metadata/checkpoints.json'))
             p.add_argument('--manifest',type=Path,default=Path('splits/tuk_heldout_clean_portable.json'))
             p.add_argument('--checkpoint',type=Path,default=Path('models/roughnet_cosine_tuk_heldout/roughnet_cosine_tuk_heldout_best.pth'))
         else:p.add_argument('--split',choices=['validation','test'],default='test')

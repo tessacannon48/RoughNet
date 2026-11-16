@@ -219,7 +219,7 @@ def main():
     p=sub.add_parser('prepare');p.add_argument('--out',type=Path,default=Path('reconstructions/roughnet_noise_sampler'))
     p.add_argument('--manifest',type=Path,default=Path('splits/original_clean_portable.json'))
     p.add_argument('--data-root', type=Path)
-    p.add_argument('--checkpoint-registry', type=Path, default=Path('release/checkpoints.json'))
+    p.add_argument('--checkpoint-registry', type=Path, default=Path('metadata/checkpoints.json'))
     p.add_argument('--linear',type=Path,default=Path('models/roughnet_linear/roughnet_linear_best.pth'))
     p.add_argument('--cosine',type=Path,default=Path('models/roughnet_cosine/roughnet_cosine_best.pth'))
     p.add_argument('--batch-size',type=int,default=8);p.add_argument('--seed',type=int,default=42);p.add_argument('--max-patches',type=int)

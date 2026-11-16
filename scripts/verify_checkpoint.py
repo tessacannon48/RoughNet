@@ -11,7 +11,7 @@ sys.path.insert(0,str(ROOT))
 def main():
  p=argparse.ArgumentParser(description=__doc__)
  p.add_argument('--checkpoint',type=Path,default=ROOT/'models/roughnet_cosine/roughnet_cosine_best.pth')
- p.add_argument('--registry',type=Path,default=ROOT/'release/checkpoints.json')
+ p.add_argument('--registry',type=Path,default=ROOT/'metadata/checkpoints.json')
  p.add_argument('--manifest',type=Path)
  p.add_argument('--data-root',type=Path,default=ROOT/'input_data')
  p.add_argument('--verify-data',action='store_true');p.add_argument('--smoke-inference',action='store_true')
@@ -20,7 +20,7 @@ def main():
  from src.utils.spatial_split import sha256_file,validate_manifest,portable_digest,verify_checkpoint_split
  checksum=sha256_file(a.checkpoint)
  records=json.loads(a.registry.read_text())['checkpoints'];record=next((r for r in records if r['sha256']==checksum),None)
- if record is None:p.error('Weights checksum is not in the publication registry')
+ if record is None:p.error('Weights checksum is not in the checkpoint registry')
  report=dict(checkpoint=a.checkpoint.name,sha256=checksum,selected_epoch=record['epoch'],data_verified=False)
  if a.verify_data:
   manifest=json.loads((a.manifest or ROOT/record['manifest']).read_text())

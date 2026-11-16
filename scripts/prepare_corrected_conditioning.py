@@ -14,7 +14,7 @@ def main():
     p.add_argument('--out',type=Path,default=Path('reconstructions/roughnet_conditioning'))
     p.add_argument('--manifest',type=Path,default=Path('splits/original_clean_portable.json'))
     p.add_argument('--data-root',type=Path,default=engine.ROOT/'input_data')
-    p.add_argument('--checkpoint-registry',type=Path,default=Path('release/checkpoints.json'))
+    p.add_argument('--checkpoint-registry',type=Path,default=Path('metadata/checkpoints.json'))
     args=p.parse_args()
     split=json.loads(args.manifest.read_text())
     validate_manifest(split,engine.ROOT,data_root=args.data_root)

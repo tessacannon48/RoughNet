@@ -11,7 +11,7 @@ export MPLCONFIGDIR="${TMPDIR:-/tmp}/roughnet-mpl"
 export OMP_NUM_THREADS=4
 python_bin="${PYTHON_BIN:-python}"
 if [[ ! -f "$study/manifest.json" ]]; then
-    "$python_bin" -u scripts/noise_sampler_ablation.py prepare --out "$study" --manifest splits/original_clean_portable.json --checkpoint-registry release/checkpoints.json 2>&1 | tee -a "$study/$split.log"
+    "$python_bin" -u scripts/noise_sampler_ablation.py prepare --out "$study" --manifest splits/original_clean_portable.json --checkpoint-registry metadata/checkpoints.json 2>&1 | tee -a "$study/$split.log"
 fi
 "$python_bin" -u scripts/noise_sampler_ablation.py run --out "$study" --split "$split" --device cuda \
     2>&1 | tee -a "$study/$split.log"
