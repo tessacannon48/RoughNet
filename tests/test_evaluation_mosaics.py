@@ -30,7 +30,7 @@ class CachedMosaicTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.study = self.root / "study"
         self.study.mkdir()
-        self.checkpoint = self.root / "original_clean_best.pth"
+        self.checkpoint = self.root / "roughnet_cosine_best.pth"
         self.checkpoint.write_bytes(b"frozen selected checkpoint")
 
     def fixture(self, overlapping=False, shifted=False):

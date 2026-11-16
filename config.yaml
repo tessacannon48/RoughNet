@@ -1,68 +1,56 @@
-# config.yaml
-
-# Data configuration
 data:
-  train_locations: 
-    - "pondinlet"
-    - "tuk"
+  train_locations:
+  - pondinlet
+  - tuk
   validation_regions:
-    - 4
-    - 13
-  evaluation_patch_ids: ["05275","05301", "05400", "05408", "12520","12530","12544","12551"]
+  - 4
+  - 13
+  evaluation_patch_ids: []
   s2_dirs:
-    - "input_data/s2_patches_pondinlet_2024"
-    - "input_data/s2_patches_tuk"
+  - input_data/s2_patches_pondinlet
+  - input_data/s2_patches_tuk
   lidar_dirs:
-    - "input_data/lidar_patches_pondinlet_2024"
-    - "input_data/lidar_patches_tuk"
-  # meters per pixel for LiDAR/residual raster
+  - input_data/lidar_patches_pondinlet
+  - input_data/lidar_patches_tuk
   pixel_size_m: 1.0
-
-# Training parameters
+  split_manifest: splits/original_clean_portable.json
 training:
   batch_size: 8
   epochs: 200
   lr: 0.0001
   timesteps: 1000
-  noise_schedule: "linear"
+  noise_schedule: cosine
   num_workers: 16
-  context_k: 1
-  randomize_context: false
+  context_k: 6
+  randomize_context: true
   loss:
-    name: "masked_mse_loss"  
-    alpha: 0.1 
-
-# Model parameters
+    name: masked_hybrid_mse_loss
+    alpha: 1.0
 model:
   unet_depth: 4
-  base_channels: 128
+  base_channels: 64
   embed_dim: 256
-  attention_variant: "default"
-
-# Logging and saving
+  attention_variant: mid
 logging:
-  wandb_project: "rough_net"
-  wandb_name: null
-  run_name: "default_run"
-  save_dir: "models"
-  output_dir: "reconstructions"
-
-# Sampling and evaluation
+  wandb_project: rough_net
+  wandb_name: roughnet_cosine
+  run_name: roughnet_cosine
+  save_dir: models/roughnet_cosine
+  output_dir: reconstructions/roughnet_cosine
 evaluation:
   sampling_methods:
-    - ddpm
+  - plms
   evaluate: false
-  eval_index_json: "fixed_eval.json"
-    # multiscale JSD settings
-  jsd_scales_m: [1.0, 2.0, 5.0, 10.0]
+  eval_index_json: fixed_eval.json
+  jsd_scales_m:
+  - 1.0
+  - 2.0
+  - 5.0
+  - 10.0
   jsd_bins: 256
-  # normal angle settings
   nae_use_sobel: true
   nae_degrees: true
-  # PSD settings
   psd_window: true
-
-# System settings
 system:
-  device: "auto"
+  device: cuda
   debug: false

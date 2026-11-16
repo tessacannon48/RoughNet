@@ -35,5 +35,6 @@ def resume_signature(config):
     # Operational output paths may move; scientific and loader configuration must match.
     return dict(model=config['model'], training=config['training'],
                 split_digest=config['data'].get('split_digest'),
-                data={k:v for k,v in config['data'].items() if k not in ('split_manifest','split_digest')},
+                data={k:v for k,v in config['data'].items()
+                      if k not in ('split_manifest','split_digest','data_root','lidar_dirs','s2_dirs')},
                 system=config['system'])

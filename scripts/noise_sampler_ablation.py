@@ -20,7 +20,7 @@ from src.model.unet import ConditionalUNet
 from src.diffusion.scheduler import LinearDiffusionScheduler, CosineDiffusionScheduler
 from src.diffusion.sampling import p_sample_loop_ddpm, p_sample_loop_ddim, p_sample_loop_plms
 from src.utils.conditioning_ablation import METRICS, stable_seed, paired_noise, patch_metrics, sha256_file, json_digest, write_json, save_predictions
-from src.utils.spatial_split import validate_manifest, digest
+from src.utils.spatial_split import validate_manifest, digest, data_path, verify_checkpoint_split, sha256_file as input_sha
 
 SCHEDULES = ('linear', 'cosine')
 SAMPLERS = ('ddpm', 'ddim', 'plms')
@@ -36,15 +36,15 @@ def prepare(args):
     if (out/'manifest.json').exists():
         raise FileExistsError('Study already prepared; reuse it or choose another output directory')
     split = json.loads(args.manifest.read_text())
-    validate_manifest(split, ROOT)
+    data_root = getattr(args, 'data_root', None)
+    validate_manifest(split, ROOT, data_root=data_root)
     configurations, checkpoints = {}, {}
     for schedule, path in [('linear', args.linear), ('cosine', args.cosine)]:
         saved = torch.load(path, map_location='cpu', weights_only=False)
         cfg = saved['config']
         if cfg['training']['noise_schedule'] != schedule or cfg['training']['timesteps'] != 1000:
             raise ValueError('Checkpoint schedule/timestep mismatch')
-        if cfg['data'].get('split_digest') != digest(split):
-            raise ValueError('Checkpoint was not trained on the specified corrected split')
+        verify_checkpoint_split(cfg, split, path, getattr(args, 'checkpoint_registry', None))
         configurations[schedule] = cfg
         checkpoints[schedule] = dict(path=str(path.resolve()), sha256=sha256_file(path), epoch=saved['epoch'], val_loss=saved['val_loss'])
     linear, cosine = configurations['linear'], configurations['cosine']
@@ -63,7 +63,9 @@ def prepare(args):
             raise ValueError(f'Empty cohort: {region}')
         cohorts[region] = dict(split=role, records=rows, directories=split['directories'][region])
     write_json(out/'manifest.json', dict(version=1, checkpoints=checkpoints, configurations=configurations,
-               split_digest=digest(split), cohorts=cohorts, sources=sources(), seed=args.seed,
+               split_digest=digest(split), split_version=split.get('version', 1),
+               data_root=str(Path(data_root).resolve()) if data_root else None,
+               cohorts=cohorts, sources=sources(), seed=args.seed,
                batch_size=args.batch_size, max_patches=args.max_patches,
                protocol='paper metrics; all 1000 timesteps; DDIM eta=0; PLMS order=4; paired initial noise; batch-seeded DDPM innovations'))
     print('Prepared', out, 'cohorts:', {r:len(c['records']) for r,c in cohorts.items()}, flush=True)
@@ -109,8 +111,10 @@ def run(args):
     for r in regions:
         for row in m['cohorts'][r]['records']:
             for f in row['files']:
-                st=(ROOT/f['path']).stat()
-                if (st.st_size, st.st_mtime_ns)!=(f['size'], f['mtime_ns']):
+                path = data_path(f['path'], root=ROOT, data_root=m.get('data_root'))
+                st=path.stat()
+                changed = (st.st_size != f['size'] or input_sha(path) != f['sha256']) if 'sha256' in f else (st.st_size, st.st_mtime_ns)!=(f['size'], f['mtime_ns'])
+                if changed:
                     raise ValueError(f"Input changed: {f['path']}")
     device=torch.device(args.device)
     if device.type=='cuda' and not torch.cuda.is_available(): raise RuntimeError('CUDA unavailable')
@@ -134,7 +138,8 @@ def run(args):
         scheduler=(LinearDiffusionScheduler if schedule=='linear' else CosineDiffusionScheduler)(timesteps=1000,device=device)
         for region in regions:
             cohort=m['cohorts'][region];ids=[r['id'] for r in cohort['records']]
-            ds=LidarS2Dataset(str(ROOT/cohort['directories']['lidar']),str(ROOT/cohort['directories']['s2']),context_k=6,
+            ds=LidarS2Dataset(str(data_path(cohort['directories']['lidar'], root=ROOT, data_root=m.get('data_root'))),
+                              str(data_path(cohort['directories']['s2'], root=ROOT, data_root=m.get('data_root'))),context_k=6,
                               randomize_context=False,augment=False,split='val',split_pids=ids)
             if [s['tile_id'] for s in ds.samples]!=ids: raise ValueError('Dataset omitted/reordered prepared IDs')
             for start in range(0,len(ids),m['batch_size']):
@@ -211,16 +216,18 @@ def summarize(args):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__);sub=parser.add_subparsers(dest='command',required=True)
-    p=sub.add_parser('prepare');p.add_argument('--out',type=Path,default=Path('reconstructions/noise_sampler_clean'))
-    p.add_argument('--manifest',type=Path,default=Path('splits/original_clean.json'))
-    p.add_argument('--linear',type=Path,default=Path('models/original_clean_linear/original_clean_linear_best.pth'))
-    p.add_argument('--cosine',type=Path,default=Path('models/original_clean/original_clean_best.pth'))
+    p=sub.add_parser('prepare');p.add_argument('--out',type=Path,default=Path('reconstructions/roughnet_noise_sampler'))
+    p.add_argument('--manifest',type=Path,default=Path('splits/original_clean_portable.json'))
+    p.add_argument('--data-root', type=Path)
+    p.add_argument('--checkpoint-registry', type=Path, default=Path('release/checkpoints.json'))
+    p.add_argument('--linear',type=Path,default=Path('models/roughnet_linear/roughnet_linear_best.pth'))
+    p.add_argument('--cosine',type=Path,default=Path('models/roughnet_cosine/roughnet_cosine_best.pth'))
     p.add_argument('--batch-size',type=int,default=8);p.add_argument('--seed',type=int,default=42);p.add_argument('--max-patches',type=int)
-    p=sub.add_parser('run');p.add_argument('--out',type=Path,default=Path('reconstructions/noise_sampler_clean'))
+    p=sub.add_parser('run');p.add_argument('--out',type=Path,default=Path('reconstructions/roughnet_noise_sampler'))
     p.add_argument('--split',choices=['validation','test'],default='validation');p.add_argument('--device',default='cuda')
     p.add_argument('--schedules',nargs='+',choices=SCHEDULES,default=list(SCHEDULES));p.add_argument('--samplers',nargs='+',choices=SAMPLERS,default=list(SAMPLERS))
     p.add_argument('--regions',nargs='+');p.add_argument('--max-batches',type=int)
-    p=sub.add_parser('summarize');p.add_argument('--out',type=Path,default=Path('reconstructions/noise_sampler_clean'))
+    p=sub.add_parser('summarize');p.add_argument('--out',type=Path,default=Path('reconstructions/roughnet_noise_sampler'))
     p.add_argument('--split',choices=['validation','test'],default='validation')
     args=parser.parse_args()
     if args.command=='prepare' and (args.batch_size<1 or (args.max_patches is not None and args.max_patches<1)): parser.error('Counts must be positive')

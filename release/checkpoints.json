@@ -1,0 +1,38 @@
+{
+  "checkpoints": [
+    {
+      "epoch": 166,
+      "legacy_split_digest": "c4fbdd8b7df144c5be8a4ed65c1cbe111e9184dd8e7c5ea9fb9394b8f8e865b5",
+      "manifest": "splits/original_clean_portable.json",
+      "name": "roughnet_cosine",
+      "original_path": "models/original_clean/original_clean_best.pth",
+      "paper": "Final model; Tables 1, 2, S1 and figures",
+      "path": "models/roughnet_cosine/roughnet_cosine_best.pth",
+      "portable_split_digest": "3e69700fa4a2244984745303f4780c3c920161a24c9cbec888c90e6e7c5b2eeb",
+      "sha256": "53f42e1075573b4367b7cb7a12ee617fa0d43691ae0163a9305b858a0a5b047c"
+    },
+    {
+      "epoch": 93,
+      "legacy_split_digest": "c4fbdd8b7df144c5be8a4ed65c1cbe111e9184dd8e7c5ea9fb9394b8f8e865b5",
+      "manifest": "splits/original_clean_portable.json",
+      "name": "roughnet_linear",
+      "original_path": "models/original_clean_linear/original_clean_linear_best.pth",
+      "paper": "Linear rows in Tables 1 and S1",
+      "path": "models/roughnet_linear/roughnet_linear_best.pth",
+      "portable_split_digest": "3e69700fa4a2244984745303f4780c3c920161a24c9cbec888c90e6e7c5b2eeb",
+      "sha256": "00054cad9fc62edec4472e056d450ec99a8bbe5fa04e356e9ccdfc6263be46e3"
+    },
+    {
+      "epoch": 134,
+      "legacy_split_digest": "34d1deb52183b75c00ebe6cee722b0f47b92e765d9e4052f7ca6e30df336f06b",
+      "manifest": "splits/tuk_heldout_clean_portable.json",
+      "name": "roughnet_cosine_tuk_heldout",
+      "original_path": "models/tuk_heldout_clean/tuk_heldout_clean_best.pth",
+      "paper": "Geographic transfer; Table S2",
+      "path": "models/roughnet_cosine_tuk_heldout/roughnet_cosine_tuk_heldout_best.pth",
+      "portable_split_digest": "87e2bb78ab7701bed434bf0696e002844dc66498a4de2ecb3ca66cf3105e2248",
+      "sha256": "610d97c9e9ed11c406593311afa01f488e24da096400721fe210835b59aa4ce7"
+    }
+  ],
+  "schema": 1
+}

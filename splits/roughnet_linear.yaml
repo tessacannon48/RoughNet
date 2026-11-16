@@ -19,7 +19,7 @@ training:
   epochs: 200
   lr: 0.0001
   timesteps: 1000
-  noise_schedule: cosine
+  noise_schedule: linear
   num_workers: 16
   context_k: 6
   randomize_context: true
@@ -33,10 +33,10 @@ model:
   attention_variant: mid
 logging:
   wandb_project: rough_net
-  wandb_name: original_clean
-  run_name: original_clean
-  save_dir: models/original_clean
-  output_dir: reconstructions/original_clean
+  wandb_name: roughnet_linear
+  run_name: roughnet_linear
+  save_dir: models/roughnet_linear
+  output_dir: reconstructions/roughnet_linear
 evaluation:
   sampling_methods:
   - plms

@@ -41,7 +41,7 @@ def source_hashes():
 
 def fingerprint(path):
     s = path.stat()
-    return {"path": str(path), "size": s.st_size, "mtime_ns": s.st_mtime_ns}
+    return {"path": str(path), "size": s.st_size, "sha256": sha256_file(path)}
 
 
 def check_config(cfg):
@@ -160,7 +160,13 @@ def verify_inputs(manifest, regions):
     for region in regions:
         for rec in manifest["regions"][region]["records"]:
             for signature in rec["files"]:
-                if fingerprint(Path(signature["path"])) != signature:
+                path = Path(signature['path'])
+                if 'sha256' in signature:
+                    changed = fingerprint(path) != signature
+                else:
+                    st = path.stat()
+                    changed = (st.st_size, st.st_mtime_ns) != (signature['size'],signature['mtime_ns'])
+                if changed:
                     raise ValueError(f"Data changed since prepare: {signature['path']}")
 
 

@@ -67,7 +67,7 @@ def get_region_preset(region_name: str, model_type: str = "cosine", root: str = 
 
     out_prefix = "final_val" if key in ("pondinlet", "tuk") else "final_test"
 
-    run_name = "original_clean" if model_type == "cosine" else "original_clean_linear"
+    run_name = "roughnet_cosine" if model_type == "cosine" else "roughnet_linear"
     return {
         "region_key": key,
         "pretty_name": pretty_name,
@@ -479,7 +479,7 @@ def _rotate_and_crop(arr, angle, mask=None):
 
 def build_cached_demeaned_mosaics(study_dir, region_key, checkpoint_path,
                                  schedule="cosine", sampler="plms", max_tiles=None,
-                                 root=PROJECT_ROOT):
+                                 root=PROJECT_ROOT, data_root=None):
     """Blend the exact scored residuals without inference or duplicate tile TIFFs.
 
     Archive hashes and batch identities come from the completed study. LiDAR
@@ -490,6 +490,7 @@ def build_cached_demeaned_mosaics(study_dir, region_key, checkpoint_path,
     # The conditioning metric adapter imports this module; defer its IO helpers
     # until the evaluator has finished defining the metric functions.
     from src.utils.conditioning_ablation import sha256_file, json_digest
+    from src.utils.spatial_split import data_path
     root = Path(root).resolve()
     study_dir = Path(study_dir).resolve()
     checkpoint_path = Path(checkpoint_path).resolve()
@@ -526,9 +527,10 @@ def build_cached_demeaned_mosaics(study_dir, region_key, checkpoint_path,
     grids = []
     for record in tqdm(records, desc="LiDAR grid headers"):
         lidar_file = record["files"][0]
-        path = root / lidar_file["path"]
+        path = data_path(lidar_file['path'],root=root,data_root=data_root or manifest.get('data_root'))
         stat = path.stat()
-        if (stat.st_size, stat.st_mtime_ns) != (lidar_file["size"], lidar_file["mtime_ns"]):
+        changed = (stat.st_size != lidar_file['size'] or sha256_file(path) != lidar_file['sha256']) if 'sha256' in lidar_file else (stat.st_size, stat.st_mtime_ns) != (lidar_file['size'], lidar_file['mtime_ns'])
+        if changed:
             raise ValueError(f"LiDAR input changed since inference: {path}")
         with rasterio.open(path) as src:
             transform = src.transform
@@ -1263,6 +1265,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Evaluate RoughNet on a given region (val or test)."
     )
+    parser.add_argument('--data-root',type=Path,help='Directory containing lidar_patches_* and s2_patches_*')
     parser.add_argument(
         "--root",
         type=str,
@@ -1391,6 +1394,9 @@ def main():
         CKPT_PATH = str(args.checkpoint if args.checkpoint.is_absolute() else project_root / args.checkpoint)
     TEST_S2_DIR = preset["s2_dir"]
     TEST_LIDAR_DIR = preset["lidar_dir"]
+    if args.data_root is not None:
+        TEST_S2_DIR = str(args.data_root / f's2_patches_{region_key}')
+        TEST_LIDAR_DIR = str(args.data_root / f'lidar_patches_{region_key}')
     base_out_dir = preset["out_dir"]
 
     # Apply region-specific default rotations if not manually specified
@@ -1415,7 +1421,7 @@ def main():
         study = project_path(args.cached_study, "reconstructions/noise_sampler_clean")
         figure_dir = project_path(args.figure_dir, "figures/final_figures")
         gt, pred, diff, provenance = build_cached_demeaned_mosaics(
-            study, region_key, CKPT_PATH, max_tiles=args.max_tiles, root=project_root,
+            study, region_key, CKPT_PATH, max_tiles=args.max_tiles, root=project_root,data_root=args.data_root,
         )
         if provenance["subset_only"] and args.figure_dir is None:
             parser.error("A subset study requires a separate --figure-dir")

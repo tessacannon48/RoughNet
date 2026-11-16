@@ -1,4 +1,4 @@
-# main.py
+# RoughNet training entry point.
 
 # Import packages
 import numpy as np
@@ -19,6 +19,7 @@ import yaml
 import random
 import warnings
 import glob
+from pathlib import Path
 import rasterio
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
@@ -50,6 +51,8 @@ from src.utils.recon_metrics import (
 def train_model(config, resume=None):
     """Unified training function with early stopping."""
     
+    if not config['data'].get('split_manifest') and not config['system'].get('debug'):
+        raise ValueError('Paper training requires a verified spatial split manifest; prepare it first')
     # Set device
     device = torch.device(config['system']['device'])
 
@@ -745,6 +748,12 @@ if __name__ == "__main__":
     # Override YAML values with command-line arguments if provided
     if args.s2_dir: config['data']['s2_dirs'] = [args.s2_dir]
     if args.lidar_dir: config['data']['lidar_dirs'] = [args.lidar_dir]
+    if args.data_root:
+        from src.utils.spatial_split import data_path
+        config['data']['data_root'] = str(Path(args.data_root).resolve())
+        for kind in ('lidar', 's2'):
+            config['data'][kind + '_dirs'] = [str(data_path(p, data_root=args.data_root).resolve())
+                                              for p in config['data'][kind + '_dirs']]
     if args.batch_size: config['training']['batch_size'] = args.batch_size
     if args.epochs: config['training']['epochs'] = args.epochs
     if args.lr: config['training']['lr'] = args.lr

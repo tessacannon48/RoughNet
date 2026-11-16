@@ -28,7 +28,7 @@ import scipy
 import torch
 from src.data.dataset import LidarS2Dataset
 from src.utils.conditioning_ablation import METRICS, json_digest, patch_metrics, sha256_file, write_json
-from src.utils.spatial_split import digest, validate_manifest
+from src.utils.spatial_split import digest, validate_manifest, data_path
 
 
 def sources():
@@ -50,14 +50,16 @@ def read_lidar(path):
     return residual, mask, mean
 
 
-def input_record(row, split):
+def input_record(row, split, data_root=None):
     path = str(Path(split['directories'][row['region']]['lidar']) / f"lidar_patch_{row['id']}.tif")
     recorded = next(f for f in row['files'] if f['path'] == path)
-    st = (ROOT / path).stat()
-    if (st.st_size, st.st_mtime_ns) != (recorded['size'], recorded['mtime_ns']):
+    actual = data_path(path,root=ROOT,data_root=data_root)
+    st = actual.stat()
+    changed = (st.st_size != recorded['size'] or sha256_file(actual) != recorded['sha256']) if 'sha256' in recorded else (st.st_size, st.st_mtime_ns) != (recorded['size'], recorded['mtime_ns'])
+    if changed:
         raise ValueError(f'Input changed since split preparation: {path}')
     return dict(region=row['region'], tile_id=row['id'], path=path,
-                size=st.st_size, mtime_ns=st.st_mtime_ns)
+                size=st.st_size, **({'sha256':recorded['sha256']} if 'sha256' in recorded else {'mtime_ns':st.st_mtime_ns}))
 
 
 def assignments(targets, donors, seed):
@@ -133,11 +135,12 @@ def prepare(args):
                 if c['split'] == args.split for r in c['records']}
     if {(r['region'], r['id']) for r in targets} != expected:
         raise ValueError('Target membership differs from reference study')
-    train = [input_record(r, split) for r in train]
-    targets = [input_record(r, split) for r in targets]
+    data_root = getattr(args,'data_root',None)
+    train = [input_record(r, split, data_root) for r in train]
+    targets = [input_record(r, split, data_root) for r in targets]
 
     def inspect(record):
-        with rasterio.open(ROOT / record['path']) as src:
+        with rasterio.open(data_path(record['path'],root=ROOT,data_root=data_root)) as src:
             raw = src.read().astype(np.float32)
         if raw.shape[1:] != (256, 256):
             raise ValueError(f"Unexpected donor dimensions: {record['path']}")
@@ -159,6 +162,7 @@ def prepare(args):
               for r in sorted({x['region'] for x in inventory})}
     reference_csv = args.reference_study / args.split / 'per_patch.csv'
     manifest = dict(version=1, split=args.split, split_digest=digest(split), seed=args.seed,
+                    data_root=str(data_root.resolve()) if data_root else None,
                     batch_size=args.batch_size, config=cfg, sources=current,
                     reference_metric_parity=parity,
                     donor_inventory=inventory, targets=targets, assignments=pairs, donor_counts=counts,
@@ -191,8 +195,10 @@ def load_study(out):
 
 def check_inputs(manifest):
     for record in manifest['donor_inventory'] + manifest['targets']:
-        st = (ROOT / record['path']).stat()
-        if (st.st_size, st.st_mtime_ns) != (record['size'], record['mtime_ns']):
+        path = data_path(record['path'],root=ROOT,data_root=manifest.get('data_root'))
+        st = path.stat()
+        changed = (st.st_size != record['size'] or sha256_file(path) != record['sha256']) if 'sha256' in record else (st.st_size, st.st_mtime_ns) != (record['size'], record['mtime_ns'])
+        if changed:
             raise ValueError(f"Input changed: {record['path']}")
 
 
@@ -233,8 +239,8 @@ def run(args):
         before = time.monotonic()
         rows = []
         for pair in batch:
-            gt, mask, _ = read_lidar(ROOT / pair['target_path'])
-            pred, donor_mask, _ = read_lidar(ROOT / pair['donor_path'])
+            gt, mask, _ = read_lidar(data_path(pair['target_path'],root=ROOT,data_root=manifest.get('data_root')))
+            pred, donor_mask, _ = read_lidar(data_path(pair['donor_path'],root=ROOT,data_root=manifest.get('data_root')))
             if not donor_mask.all():
                 raise ValueError('Prepared donor is no longer fully valid')
             values = patch_metrics(gt, pred, mask, manifest['config'])
@@ -310,10 +316,11 @@ def main():
     sub = parser.add_subparsers(dest='command', required=True)
     for command in ('prepare', 'run', 'summarize'):
         p = sub.add_parser(command)
-        p.add_argument('--out', type=Path, default=Path('reconstructions/image_free_baseline_clean'))
+        p.add_argument('--out', type=Path, default=Path('reconstructions/roughnet_image_free'))
         if command == 'prepare':
-            p.add_argument('--manifest', type=Path, default=Path('splits/original_clean.json'))
-            p.add_argument('--reference-study', type=Path, default=Path('reconstructions/noise_sampler_clean'))
+            p.add_argument('--data-root',type=Path)
+            p.add_argument('--manifest', type=Path, default=Path('splits/original_clean_portable.json'))
+            p.add_argument('--reference-study', type=Path, default=Path('reconstructions/roughnet_noise_sampler'))
             p.add_argument('--split', choices=('test', 'validation'), default='test')
             p.add_argument('--seed', type=int, default=42)
             p.add_argument('--batch-size', type=positive, default=8)

@@ -2,14 +2,14 @@
 set -euo pipefail
 repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_dir"
-study="reconstructions/conditioning_ablation_clean"
+study="reconstructions/roughnet_conditioning"
 mkdir -p "$study"
 exec 9>"$study/study.lock"
 flock -n 9 || { echo 'Conditioning study already running' >&2; exit 1; }
 export MPLBACKEND=Agg
 export MPLCONFIGDIR="${TMPDIR:-/tmp}/roughnet-mpl"
 export OMP_NUM_THREADS=4
-python_bin="${PYTHON_BIN:-../.venv-py313/bin/python}"
+python_bin="${PYTHON_BIN:-python}"
 if [[ ! -f "$study/manifest.json" ]]; then
     "$python_bin" -u scripts/prepare_corrected_conditioning.py --out "$study" \
         2>&1 | tee -a "$study/run.log"

@@ -251,7 +251,7 @@ def extended_figure(args, manifest, style, set_name):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--out',type=Path,default=ROOT/'reconstructions/fig5_extended_clean')
+    parser.add_argument('--out',type=Path,default=ROOT/'reconstructions/roughnet_fig5')
     parser.add_argument('--config',type=Path,default=ROOT/'configs/figure5.yaml')
     parser.add_argument('--figure-dir',type=Path,default=ROOT/'figures/final_figures/figure5')
     parser.add_argument('--kind',choices=('patch','extended','all'),default='all')

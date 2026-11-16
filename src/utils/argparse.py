@@ -13,12 +13,13 @@ def parse_arguments():
 
     # Core argument: path to the config file
     parser.add_argument("--resume", nargs="?", const="auto", default=None, help="Resume latest completed epoch; optionally specify a trusted checkpoint")
-    parser.add_argument('--config', type=str, default='config.yaml',
+    parser.add_argument('--config', type=str, default='splits/roughnet_cosine.yaml',
                         help='Path to the YAML configuration file')
 
     # Data paths
     parser.add_argument('--s2_dir', type=str, help='Override for S2 patches directory')
     parser.add_argument('--lidar_dir', type=str, help='Override for LiDAR patches directory')
+    parser.add_argument('--data-root', type=str, help='Directory containing lidar_patches_* and s2_patches_*')
     
     # Training parameters
     parser.add_argument('--batch_size', type=int, help='Override for batch size')

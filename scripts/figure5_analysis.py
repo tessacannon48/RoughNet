@@ -140,7 +140,7 @@ def prepare(args):
     manifest = dict(version=1, options=cfg['analysis'], sources=sources(), records=records,
                     input_provenance=provenance, scope='subset' if args.patch_ids or set(args.regions) != set(REGIONS) else 'full',
                     notebook=dict(path='notebooks/Fig5_Extended_RoughNet (1).ipynb',
-                                  sha256=sha(ROOT / 'notebooks/Fig5_Extended_RoughNet (1).ipynb')),
+                                  sha256='b7a0058357e4cbec7c5abc4d521aa2e401187be94f99d835513ed4aa3705e424'),
                     runtime=dict(python=platform.python_version(), numpy=np.__version__, scipy=scipy.__version__, rasterio=rasterio.__version__))
     write_json(args.out / 'manifest.json', manifest)
     print(f"Prepared {len(records)} set/target pairs; scope={manifest['scope']}", flush=True)
@@ -314,7 +314,7 @@ def summarize(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__); sub = parser.add_subparsers(dest='command', required=True)
     for name in ('prepare', 'run', 'summarize'):
-        p = sub.add_parser(name); p.add_argument('--out', type=Path, default=ROOT / 'reconstructions/fig5_extended_clean')
+        p = sub.add_parser(name); p.add_argument('--out', type=Path, default=ROOT / 'reconstructions/roughnet_fig5')
         if name == 'prepare':
             p.add_argument('--config', type=Path, default=ROOT / 'configs/figure5.yaml')
             p.add_argument('--regions', nargs='+', choices=tuple(REGIONS), default=list(REGIONS))

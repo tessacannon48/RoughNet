@@ -41,7 +41,7 @@ class SplitTests(unittest.TestCase):
             self.assertFalse(path.with_suffix('.pth.tmp').exists())
 
     def test_interrupted_training_matches_uninterrupted(self):
-        from scripts import main
+        from scripts import train_roughnet as main
         class Dataset(torch.utils.data.Dataset):
             def __init__(self, **kwargs): self.samples=[{'tile_id':str(i)} for i in range(4)]
             def __len__(self): return 4
@@ -55,6 +55,8 @@ class SplitTests(unittest.TestCase):
         cfg=yaml.safe_load((Path(__file__).resolve().parents[1]/'config.yaml').read_text())
         cfg['training'].update(epochs=2,num_workers=0,batch_size=2)
         cfg['system']['device']='cpu';cfg['logging']['wandb_name']='test'
+        cfg['system']['debug']=True
+        cfg['data'].pop('split_manifest', None)
         cfg['data'].update(s2_dirs=[],lidar_dirs=[])
         cfg['evaluation']['evaluate']=False
         with tempfile.TemporaryDirectory() as d, patch.object(main,'LidarS2Dataset',Dataset),patch.object(main,'ConditionalUNet',Model),patch.object(main.wandb,'init'),patch.object(main.wandb,'log'):

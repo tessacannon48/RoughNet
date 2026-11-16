@@ -1,25 +1,25 @@
 data:
   train_locations:
   - pondinlet
-  - tuk
+  - cambridge
   validation_regions:
   - 4
-  - 13
+  - 4
   evaluation_patch_ids: []
   s2_dirs:
   - input_data/s2_patches_pondinlet
-  - input_data/s2_patches_tuk
+  - input_data/s2_patches_cambridge
   lidar_dirs:
   - input_data/lidar_patches_pondinlet
-  - input_data/lidar_patches_tuk
+  - input_data/lidar_patches_cambridge
   pixel_size_m: 1.0
-  split_manifest: splits/original_clean.json
+  split_manifest: splits/tuk_heldout_clean_portable.json
 training:
   batch_size: 8
   epochs: 200
   lr: 0.0001
   timesteps: 1000
-  noise_schedule: linear
+  noise_schedule: cosine
   num_workers: 16
   context_k: 6
   randomize_context: true
@@ -33,10 +33,10 @@ model:
   attention_variant: mid
 logging:
   wandb_project: rough_net
-  wandb_name: original_clean_linear
-  run_name: original_clean_linear
-  save_dir: models/original_clean_linear
-  output_dir: reconstructions/original_clean_linear
+  wandb_name: roughnet_cosine_tuk_heldout
+  run_name: roughnet_cosine_tuk_heldout
+  save_dir: models/roughnet_cosine_tuk_heldout
+  output_dir: reconstructions/roughnet_cosine_tuk_heldout
 evaluation:
   sampling_methods:
   - plms
