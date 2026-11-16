@@ -47,3 +47,11 @@ input_data/
 # Rebuildable local footprint inventories (include filesystem timestamps)
 /splits/original_clean.json
 /splits/tuk_heldout_clean.json
+
+# Local publication staging and content inventories
+/build/
+/splits/*_portable.json
+/.ssh/
+/copernicus_login.py
+/RoughNet_Response_to_Reviewers_DRAFT.docx.txt
+/claude_rec.md

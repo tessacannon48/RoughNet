@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+title: "RoughNet: Generative Super-Resolution of Arctic Sea Ice Roughness from Satellite Imagery"
+message: "Please cite the version-specific Zenodo software record and accompanying paper when using RoughNet."
+type: software
+version: 1.0.0
+repository-code: "https://github.com/tessacannon48/RoughNet"
+abstract: "Conditional diffusion modelling and evaluation of Arctic sea-ice residual roughness from multi-temporal Sentinel-2 imagery."
+authors:
+  - given-names: Tessa
+    family-names: Cannon
+    affiliation: "Department of Computer Science, University College London"
+  - given-names: Michel
+    family-names: Tsamados
+    affiliation: "Department of Earth Sciences, University College London"
+  - given-names: Weibin
+    family-names: Chen
+    affiliation: "Department of Earth Sciences, University College London"
+keywords:
+  - sea ice
+  - roughness
+  - conditional diffusion
+  - Sentinel-2
