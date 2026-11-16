@@ -1,0 +1,3 @@
+-r requirements.txt
+# Tests use the standard-library unittest runner.
+cffconvert==2.0.0

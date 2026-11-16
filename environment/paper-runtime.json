@@ -1,0 +1,12 @@
+{
+  "python": "3.13.2",
+  "torch": "2.7.0+cu126",
+  "numpy": "2.2.6",
+  "rasterio": "1.4.3",
+  "scipy": "1.15.3",
+  "cuda": "12.6",
+  "cudnn": 90501,
+  "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
+  "deterministic": true,
+  "tf32": false
+}
