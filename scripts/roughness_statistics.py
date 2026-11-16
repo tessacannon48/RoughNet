@@ -1,4 +1,4 @@
-"""Figure 5 statistics adapted from Fig5_Extended_RoughNet (1).ipynb.
+"""Patch roughness, distribution and spatial structure statistics.
 
 These centered distribution/variogram diagnostics do not replace the paper's
 frozen eight-metric evaluator. No plotting or inference occurs on import.

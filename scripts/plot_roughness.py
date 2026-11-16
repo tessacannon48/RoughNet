@@ -1,6 +1,6 @@
-"""Render Figure 5 and its regional extension from saved analysis.
+"""Render single-patch, patch-wise roughness and spatial structure figures.
 
-Edit configs/figure5.yaml style settings and rerun this script without
+Edit configs/roughness.yaml style settings and rerun this script without
 recomputing distribution fits/variograms. Does not run diffusion inference.
 """
 import argparse
@@ -18,8 +18,8 @@ from matplotlib.colors import Normalize, SymLogNorm
 import numpy as np
 from scipy import stats
 import yaml
-from scripts.figure5_analysis import REGIONS, load_manifest, load_result, load_pair, result_path, sha, write_json
-from scripts.fig5_statistics import FAMILIES, exp_variogram, family_pdf, agreement, weighted_kappa
+from scripts.roughness_analysis import REGIONS, load_manifest, load_result, load_pair, result_path, sha, write_json
+from scripts.roughness_statistics import FAMILIES, exp_variogram, family_pdf, agreement, weighted_kappa
 
 
 def apply_style(style):
@@ -45,6 +45,10 @@ def save(fig, name, args, manifest, style, panel_data=None):
 
 def fmt(value, digits=3):
     return f'{value:.{digits}f}' if value is not None else 'unavailable'
+
+
+def output_name(name, set_name, style):
+    return name if set_name == style['main_set'] else f'{name}_{set_name}'
 
 
 def roughness_confusion(rows, edges):
@@ -132,20 +136,21 @@ def patch_figure(args, manifest, style, set_name):
             bbox=dict(boxstyle=f"round,pad={style.get('metrics_box_padding',1.0)}",
                       facecolor=style.get('metrics_box_facecolor','whitesmoke'),
                       edgecolor=style.get('metrics_box_edgecolor','gray')))
-    save(fig, f'figure5_patch{pid}_{set_name}', args, manifest, style)
+    save(fig, output_name('single_patch_analysis', set_name, style), args, manifest, style,
+         panel_data=dict(set=set_name, region=region, patch_id=pid))
 
 
-def extended_figure(args, manifest, style, set_name):
+def regional_figures(args, manifest, style, set_name):
     results = [load_result(args.out, r, manifest) for r in manifest['records'] if r['set'] == set_name]
     if not results: raise ValueError(f'Set not found: {set_name}')
-    panel_f = style.get('extended_panel_f','roughness_classes')
-    if panel_f not in ('roughness_classes','acf'): raise ValueError('Unknown extended_panel_f')
+    panel_f = style.get('roughness_panel','roughness_classes')
+    if panel_f not in ('roughness_classes','acf'): raise ValueError('Unknown roughness_panel')
     panel_data = None
     regions = [r for r in REGIONS if any(x['row']['region'] == r for x in results)]
-    roughness_fig, roughness_axes = plt.subplots(1, 3, figsize=style.get('extended_roughness_figsize', [18, 5.5]),
+    roughness_fig, roughness_axes = plt.subplots(1, 3, figsize=style.get('roughness_figsize', [18, 5.5]),
                                                 gridspec_kw={'width_ratios':style.get('roughness_width_ratios',[1.15,1.15,1])})
-    structure_fig, structure_axes = plt.subplots(1, 3, figsize=style.get('extended_structure_figsize', [18, 5.5]))
-    # Keep notebook panel indices internally; each output gets independent a/b/c labels.
+    structure_fig, structure_axes = plt.subplots(1, 3, figsize=style.get('structure_figsize', [18, 5.5]))
+    # Each output uses independent a/b/c labels.
     axes = [roughness_axes[0], structure_axes[0], roughness_axes[1],
             structure_axes[1], structure_axes[2], roughness_axes[2]]
     groups = {r: [x for x in results if x['row']['region'] == r] for r in regions}
@@ -200,7 +205,7 @@ def extended_figure(args, manifest, style, set_name):
             value = example[0]['jsd_centered_1m']
             percentile = stats.percentileofscore(data[i], value)
             axes[3].scatter(i+1,value,marker='*',color='black',s=260,zorder=5,
-                            label=f"Fig. 5 patch {style['patch_id']}\n({percentile:.0f}th pct.)")
+                            label=f"Selected patch {style['patch_id']}\n({percentile:.0f}th pct.)")
     axes[3].set_xticks(range(1,len(regions)+1), [REGIONS[r] for r in regions])
     axes[3].set(yscale=style.get('jsd_yscale','log'), ylabel='Centered 1 m JS divergence (base 2)')
     if style['show_legend'] and axes[3].get_legend_handles_labels()[0]:
@@ -229,7 +234,7 @@ def extended_figure(args, manifest, style, set_name):
         maximum = manifest['options']['pixel_size_m']*128
         axes[5].plot([0,maximum],[0,maximum],'k--',lw=1)
         axes[5].set(xlabel='LiDAR ACF e-folding length (m)',ylabel='Predicted ACF e-folding length (m)')
-    titles = style.get('extended_titles') or ['(a) Patch roughness amplitude', '(b) Variogram effective range', '(c) Pooled regional densities',
+    titles = style.get('regional_titles') or ['(a) Patch roughness amplitude', '(b) Variogram effective range', '(c) Pooled regional densities',
               '(d) Distribution mismatch', '(e) Best candidate family', '(f) Roughness-class agreement']
     if panel_f=='acf': titles = [*titles[:5], '(f) ACF spatial scale']
     letters = {0:'a', 2:'b', 5:'c', 1:'a', 3:'b', 4:'c'}
@@ -241,27 +246,31 @@ def extended_figure(args, manifest, style, set_name):
             ax.legend(fontsize=style['legend_size'], frameon=False, markerscale=2 if i in (0,1) else 1,
                       loc='upper left' if i in (0,1) else 'best')
     for fig in (roughness_fig, structure_fig):
-        fig.tight_layout(rect=(0,0,1,.97), w_pad=style.get('extended_wpad',2.5))
+        fig.tight_layout(rect=(0,0,1,.97), w_pad=style.get('regional_wpad',2.5))
     roughness_fig.align_xlabels(roughness_axes)
-    save(roughness_fig, f'figure5_extended_roughness_{set_name}', args, manifest, style,
-         panel_data=dict(original_panels=['a','c','f'], confusion=panel_data))
-    save(structure_fig, f'figure5_extended_structure_{set_name}', args, manifest, style,
-         panel_data=dict(original_panels=['b','d','e'], range_pairs={r:sum(x['row']['range_gt_m'] is not None and x['row']['range_pred_m'] is not None for x in groups[r]) for r in regions}))
+    save(roughness_fig, output_name('patch_wise_roughness', set_name, style), args, manifest, style,
+         panel_data=dict(set=set_name, panels=['roughness_amplitude', 'pooled_density',
+                                             'roughness_class_agreement' if panel_f == 'roughness_classes' else 'acf_spatial_scale'],
+                         confusion=panel_data))
+    save(structure_fig, output_name('patch_wise_structure', set_name, style), args, manifest, style,
+         panel_data=dict(set=set_name, panels=['variogram_range', 'distribution_mismatch', 'best_fit_family'],
+                         range_pairs={r:sum(x['row']['range_gt_m'] is not None and x['row']['range_pred_m'] is not None for x in groups[r]) for r in regions}))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--out',type=Path,default=ROOT/'reconstructions/roughnet_fig5')
-    parser.add_argument('--config',type=Path,default=ROOT/'configs/figure5.yaml')
-    parser.add_argument('--figure-dir',type=Path,default=ROOT/'figures/final_figures/figure5')
-    parser.add_argument('--kind',choices=('patch','extended','all'),default='all')
+    # Historical completed results remain inputs only; new analyses use their own directory.
+    parser.add_argument('--out',type=Path,default=ROOT/'reconstructions/fig5_extended_clean')
+    parser.add_argument('--config',type=Path,default=ROOT/'configs/roughness.yaml')
+    parser.add_argument('--figure-dir',type=Path,default=ROOT/'figures')
+    parser.add_argument('--kind',choices=('patch','regional','all'),default='all')
     parser.add_argument('--set',dest='set_name')
-    args=parser.parse_args(); style=yaml.safe_load(args.config.read_text())['style']; manifest=load_manifest(args.out)
+    args=parser.parse_args(); style=yaml.safe_load(args.config.read_text())['style']; manifest=load_manifest(args.out,read_only=True)
     set_name=args.set_name or style['main_set']
     with plt.rc_context():
         apply_style(style)
         if args.kind in ('patch','all'): patch_figure(args,manifest,style,set_name)
-        if args.kind in ('extended','all'): extended_figure(args,manifest,style,set_name)
+        if args.kind in ('regional','all'): regional_figures(args,manifest,style,set_name)
     print(f'Figures and provenance written to {args.figure_dir}')
 
 

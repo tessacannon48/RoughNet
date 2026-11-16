@@ -1,4 +1,4 @@
-"""Prepare, resume and summarize the extended Figure 5 notebook analysis.
+"""Prepare, resume and summarize patch roughness and spatial structure diagnostics.
 
 Default inputs are verified corrected cosine PLMS prediction archives: no GPU
 inference, Colab, downloads or duplicate prediction TIFFs are needed.
@@ -23,9 +23,18 @@ import rasterio
 import scipy
 from scipy import stats
 import yaml
-from scripts.fig5_statistics import analyse_arrays, agreement, fit_variogram, weighted_kappa
+from scripts.roughness_statistics import analyse_arrays, agreement, fit_variogram, weighted_kappa
 
 REGIONS = {'pondinlet': 'Pond Inlet', 'tuk': 'Tuktoyaktuk', 'cambridge': 'Cambridge Bay'}
+
+# Frozen source identities in the completed historical study. Keep its original
+# manifest keys and bytes intact; these identities permit reading saved results,
+# never resuming computations with a different implementation or environment.
+HISTORICAL_SOURCES = {
+    'fig5_statistics.py': '142b313c75f6dbb7c21c25fcea43b0ddbea9e833884c5a3fa119ac5010cff8e0',
+    'figure5_analysis.py': '3a409db89c383edad416e6a56a041bec547bf8890c9ff6aec5be4f0201432c16',
+}
+ANALYSIS_ORIGIN_SHA256 = 'b7a0058357e4cbec7c5abc4d521aa2e401187be94f99d835513ed4aa3705e424'
 
 
 def clean(value):
@@ -69,7 +78,7 @@ def resolve(path):
 
 
 def sources():
-    return {name: sha(ROOT / 'scripts' / name) for name in ('figure5_analysis.py', 'fig5_statistics.py')}
+    return {name: sha(ROOT / 'scripts' / name) for name in ('roughness_analysis.py', 'roughness_statistics.py')}
 
 
 def options_from_config(path):
@@ -139,8 +148,7 @@ def prepare(args):
     if args.patch_ids and set(args.patch_ids) - {r['pid'] for r in records}: raise ValueError('Requested patch absent from selected cohorts')
     manifest = dict(version=1, options=cfg['analysis'], sources=sources(), records=records,
                     input_provenance=provenance, scope='subset' if args.patch_ids or set(args.regions) != set(REGIONS) else 'full',
-                    notebook=dict(path='notebooks/Fig5_Extended_RoughNet (1).ipynb',
-                                  sha256='b7a0058357e4cbec7c5abc4d521aa2e401187be94f99d835513ed4aa3705e424'),
+                    analysis_origin=dict(sha256=ANALYSIS_ORIGIN_SHA256),
                     runtime=dict(python=platform.python_version(), numpy=np.__version__, scipy=scipy.__version__, rasterio=rasterio.__version__))
     write_json(args.out / 'manifest.json', manifest)
     print(f"Prepared {len(records)} set/target pairs; scope={manifest['scope']}", flush=True)
@@ -190,11 +198,13 @@ def work(task):
     return f"{record['set']}/{record['region']}/{record['pid']}: {time.monotonic() - start:.1f}s"
 
 
-def load_manifest(out):
+def load_manifest(out, *, read_only=False):
     m = json.loads((out / 'manifest.json').read_text())
-    if m['sources'] != sources(): raise ValueError('Analysis source changed; prepare a separate output directory')
+    current_sources = m['sources'] == sources()
+    if not current_sources and not (read_only and m['sources'] == HISTORICAL_SOURCES):
+        raise ValueError('Analysis source changed; prepare a separate output directory')
     runtime = dict(python=platform.python_version(), numpy=np.__version__, scipy=scipy.__version__, rasterio=rasterio.__version__)
-    if runtime != m['runtime']: raise ValueError('Analysis runtime changed')
+    if not read_only and runtime != m['runtime']: raise ValueError('Analysis runtime changed')
     return m
 
 
@@ -281,7 +291,7 @@ def summarize(args):
     fields = ['region', 'n', 'rms_patch_sigma_gt_m', 'rms_patch_sigma_pred_m', 'median_sigma_ratio',
               'mean_patch_variogram_gt_range_m', 'mean_patch_variogram_pred_range_m',
               'sigma_ccc', 'range_spearman', 'range_gt_failed_n', 'range_pred_failed_n']
-    lines = ['# Regional Figure 5 diagnostics', '',
+    lines = ['# Regional roughness and spatial structure diagnostics', '',
              'RMS of patch σ, not a regional mosaic σ. Range fits use mean within-patch semivariograms, not cross-patch pairs.',
              f"Scope: {m['scope']}. No confidence intervals; overlapping patches are not independent.", '',
              '| Set | ' + ' | '.join(fields) + ' |', '|---|' + '|'.join(['---']*len(fields)) + '|']
@@ -314,9 +324,9 @@ def summarize(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__); sub = parser.add_subparsers(dest='command', required=True)
     for name in ('prepare', 'run', 'summarize'):
-        p = sub.add_parser(name); p.add_argument('--out', type=Path, default=ROOT / 'reconstructions/roughnet_fig5')
+        p = sub.add_parser(name); p.add_argument('--out', type=Path, default=ROOT / 'reconstructions/roughnet_roughness')
         if name == 'prepare':
-            p.add_argument('--config', type=Path, default=ROOT / 'configs/figure5.yaml')
+            p.add_argument('--config', type=Path, default=ROOT / 'configs/roughness.yaml')
             p.add_argument('--regions', nargs='+', choices=tuple(REGIONS), default=list(REGIONS))
             p.add_argument('--patch-ids', nargs='+')
         elif name == 'run':
@@ -324,7 +334,9 @@ def main():
             p.add_argument('--max-patches', type=int)
         else:
             p.add_argument('--patch-id', default='12556'); p.add_argument('--patch-region', default='tuk', choices=tuple(REGIONS))
-    args = parser.parse_args(); args.out.mkdir(parents=True, exist_ok=True)
+    args = parser.parse_args()
+    if args.command != 'prepare': load_manifest(args.out)
+    args.out.mkdir(parents=True, exist_ok=True)
     with (args.out / 'analysis.lock').open('w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         {'prepare': prepare, 'run': run, 'summarize': summarize}[args.command](args)

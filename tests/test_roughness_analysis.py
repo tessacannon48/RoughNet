@@ -11,13 +11,13 @@ import yaml
 from scipy.spatial.distance import pdist
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts import figure5_analysis as runner
-from scripts import fig5_statistics as metrics
+from scripts import roughness_analysis as runner
+from scripts import roughness_statistics as metrics
 
 
-class Figure5Tests(unittest.TestCase):
+class RoughnessTests(unittest.TestCase):
     def test_roughness_confusion_boundaries_counts_and_empty_classes(self):
-        from scripts.plot_figure5 import roughness_confusion
+        from scripts.plot_roughness import roughness_confusion
         rows=[dict(sigma_gt=.04,sigma_pred=.05),dict(sigma_gt=.05,sigma_pred=.09),
               dict(sigma_gt=.20,sigma_pred=.21)]
         result=roughness_confusion(rows,[.05,.10,.20])
@@ -27,7 +27,7 @@ class Figure5Tests(unittest.TestCase):
         with self.assertRaises(ValueError):roughness_confusion(rows,[.1,.05])
 
     def options(self):
-        cfg = yaml.safe_load((runner.ROOT/'configs/figure5.yaml').read_text())
+        cfg = yaml.safe_load((runner.ROOT/'configs/roughness.yaml').read_text())
         cfg['analysis'].update(min_valid=32, variogram_samples=64, fit_samples=64)
         return cfg
 
@@ -86,13 +86,14 @@ class Figure5Tests(unittest.TestCase):
         splits=root/'ids.json';runner.write_json(splits,{'tuk':{'validation':ids}})
         cfg['sets']={'corrected':dict(type='cache',study=str(study),schedule='cosine',sampler='plms')}
         cfg['split_ids']=str(splits)
-        cfg['style'].update(formats=['png'],dpi=60,patch_figsize=[10,10],extended_figsize=[14,10])
-        config=root/'figure5.yaml';config.write_text(yaml.safe_dump(cfg))
+        cfg['style'].update(formats=['png'],dpi=60,patch_figsize=[10,10],
+                            roughness_figsize=[14,5],structure_figsize=[14,5])
+        config=root/'roughness.yaml';config.write_text(yaml.safe_dump(cfg))
         return SimpleNamespace(out=root/'out',config=config,regions=['tuk'],patch_ids=None,
                                patch_id='12556',patch_region='tuk',workers=1,max_patches=1),cfg
 
     def test_verified_cache_resume_summary_and_restyle_without_analysis(self):
-        from scripts import plot_figure5 as plotting
+        from scripts import plot_roughness as plotting
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);args,cfg=self.fixture(root)
             runner.prepare(args);m=runner.load_manifest(args.out)
@@ -113,9 +114,9 @@ class Figure5Tests(unittest.TestCase):
                                      legends=[[t.get_text() for t in ax.get_legend().get_texts()] if ax.get_legend() else [] for ax in fig.axes])
                 original_save(fig,name,*positional,**kwargs)
             with patch.object(plotting,'save',side_effect=inspect_save):
-                plotting.extended_figure(args,m,style,'corrected')
-            roughness=inspected['figure5_extended_roughness_corrected']
-            structure=inspected['figure5_extended_structure_corrected']
+                plotting.regional_figures(args,m,style,'corrected')
+            roughness=inspected['patch_wise_roughness']
+            structure=inspected['patch_wise_structure']
             self.assertEqual([t[:3] for t in roughness['titles']],['(a)','(b)','(c)'])
             self.assertEqual([t[:3] for t in structure['titles']],['(a)','(b)','(c)'])
             self.assertIn('roughness amplitude',roughness['titles'][0])
@@ -124,15 +125,34 @@ class Figure5Tests(unittest.TestCase):
             self.assertEqual(structure['yscales'][1],'log')
             self.assertIn('ρ=',structure['legends'][0][0])
             self.assertIn('open = LiDAR',structure['legends'][2])
-            provenance=json.loads((args.figure_dir/'figure5_extended_structure_corrected.json').read_text())
-            self.assertEqual(provenance['panel_data']['original_panels'],['b','d','e'])
-            sidecar=json.loads((args.figure_dir/'figure5_patch12556_corrected.json').read_text())
+            provenance=json.loads((args.figure_dir/'patch_wise_structure.json').read_text())
+            self.assertEqual(provenance['panel_data']['panels'],['variogram_range','distribution_mismatch','best_fit_family'])
+            sidecar=json.loads((args.figure_dir/'single_patch_analysis.json').read_text())
             self.assertEqual(sidecar['style']['dpi'],60)
             style['prediction_color']='darkorange';plotting.patch_figure(args,m,style,'corrected')
             self.assertEqual(before,first.read_bytes())
             record=m['records'][0];Path(record['path']).write_bytes(b'corrupt')
             with self.assertRaisesRegex(ValueError,'archive changed'):
                 runner.load_pair(record)
+
+    def test_historical_results_are_readable_but_cannot_be_resumed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args,_=self.fixture(Path(directory));runner.prepare(args)
+            manifest=runner.load_manifest(args.out)
+            manifest['sources']=dict(runner.HISTORICAL_SOURCES)
+            manifest['runtime']['python']='historical-environment'
+            path=args.out/'manifest.json';runner.write_json(path,manifest)
+            before=path.read_bytes()
+            self.assertEqual(runner.load_manifest(args.out,read_only=True),manifest)
+            self.assertEqual(path.read_bytes(),before)
+            with self.assertRaisesRegex(ValueError,'source changed'):
+                runner.run(args)
+            with self.assertRaisesRegex(ValueError,'source changed'):
+                runner.summarize(args)
+            manifest['sources'][next(iter(manifest['sources']))]='unknown-source'
+            runner.write_json(path,manifest)
+            with self.assertRaisesRegex(ValueError,'source changed'):
+                runner.load_manifest(args.out,read_only=True)
 
 
 if __name__=='__main__':unittest.main()
