@@ -5,67 +5,67 @@
     {
       "paper_figure": "Main 1",
       "overleaf_path": "Figures/lidar_map.pdf",
-      "path": "figures/final_figures/lidar_map.pdf",
+      "path": "figures/lidar_map.pdf",
       "sha256": "c1a7ea7aa7703440dfa2174d6b5ad55feeea4f25d6cfde17a4fca3201f303b7c"
     },
     {
       "paper_figure": "Main 2",
       "overleaf_path": "Figures/model_diagram.png",
-      "path": "figures/final_figures/model_diagram.png",
+      "path": "figures/model_diagram.png",
       "sha256": "7cd2841c9c7e7667b0df04a345710050b724edbc1d197093a8303409f5fb4bd7"
     },
     {
       "paper_figure": "Main 3",
       "overleaf_path": "Figures/patch_reconstructions_pdfs.png",
-      "path": "figures/final_figures/patch_recontructions_pdfs_clean.png",
+      "path": "figures/patch_reconstructions_pdfs.png",
       "sha256": "54c0698c7efd94b2c00f232667663a9cc7721d3428785c24f59d3141b3af87af"
     },
     {
       "paper_figure": "Main 4",
       "overleaf_path": "Figures/mosaics_tuk.png",
-      "path": "figures/final_figures/tuk_mosaic_2d_demeaned.png",
+      "path": "figures/mosaics_tuk.png",
       "sha256": "53d7cb7779b9b129c54bf9b063be8ce278e36347f808820e2ee664122e86c51e"
     },
     {
       "paper_figure": "Main 5",
       "overleaf_path": "Figures/single_patch_analysis.png",
-      "path": "figures/final_figures/figure5/figure5_patch12556_corrected.png",
+      "path": "figures/single_patch_analysis.png",
       "sha256": "b8f3e3e25c8e3bcd70b448b3276cb9be8df5d79676b4c56bebe226fe45a445c7"
     },
     {
       "paper_figure": "Main 6",
       "overleaf_path": "Figures/patch_wise_roughness.png",
-      "path": "figures/final_figures/figure5/figure5_extended_roughness_corrected.png",
+      "path": "figures/patch_wise_roughness.png",
       "sha256": "09e5d8c8f82e76bd95f1be024e13b65dc3debdce1a0c93741bfac64b7c0d0651"
     },
     {
       "paper_figure": "Supplement S1",
       "overleaf_path": "Figures/condition_ablation_patch_reconstructions.png",
-      "path": "figures/final_figures/condition_ablation_patch_reconstructions.png",
+      "path": "figures/condition_ablation_patch_reconstructions.png",
       "sha256": "a8817fac1e8739e484d49dacdda1daf9564267a0ca90dad7423e2a4160230333"
     },
     {
       "paper_figure": "Supplement S2",
       "overleaf_path": "Figures/mosaics_pond.png",
-      "path": "figures/final_figures/pondinlet_mosaic_2d_demeaned.png",
+      "path": "figures/mosaics_pond.png",
       "sha256": "53729999db63ff8ebc44eb0995d0ba37d60b61ccd4b67ea4a4d6bb0f9bf73283"
     },
     {
       "paper_figure": "Supplement S3",
       "overleaf_path": "Figures/mosaics_cambridge.png",
-      "path": "figures/final_figures/cambridge_mosaic_2d_demeaned.png",
+      "path": "figures/mosaics_cambridge.png",
       "sha256": "6b546c2804b0110554d5cbe70cc2268061608ba48b13734a767d6090d1b17cad"
     },
     {
       "paper_figure": "Supplement S4",
       "overleaf_path": "Figures/patch_wise_structure.png",
-      "path": "figures/final_figures/figure5/figure5_extended_structure_corrected.png",
+      "path": "figures/patch_wise_structure.png",
       "sha256": "b2eaf1d8f9ecbce76552b993e870616001100087bea2a0a14b44a1c8f029210f"
     },
     {
       "paper_figure": "Supplement S5",
       "overleaf_path": "Figures/sample_patch.png",
-      "path": "figures/final_figures/sample_patch.png",
+      "path": "figures/sample_patch.png",
       "sha256": "0c0ae2b3b5f61b719643beb6620f7ac75a6ef55f2b37cb67b64ba79033c3b709"
     }
   ]

@@ -26,12 +26,6 @@ reconstructions/
 # Ignore wandb files
 wandb/
 
-# Ignore raw figure outputs
-figures/cosine_model/
-figures/linear_model/
-figures/test/
-figures/old_figures/
-
 # Ignore cache
 __pycache__/
 *.pyc

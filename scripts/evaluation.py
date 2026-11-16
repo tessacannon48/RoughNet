@@ -75,7 +75,7 @@ def get_region_preset(region_name: str, model_type: str = "cosine", root: str = 
         "ckpt_path": os.path.join(root, "models", run_name, f"{run_name}_best.pth"),
         "s2_dir": os.path.join(root, "input_data", f"s2_patches_{key}"),
         "lidar_dir": os.path.join(root, "input_data", f"lidar_patches_{key}"),
-        "out_dir": os.path.join(root, "figures", run_name, f"{out_prefix}_{key}"),
+        "out_dir": os.path.join(root, "reconstructions", run_name, f"{out_prefix}_{key}"),
     }
 
 
@@ -1292,7 +1292,7 @@ def main():
     )
     parser.add_argument(
         "--figure-dir", type=Path,
-        help="Destination for --mosaics-only PNGs and provenance (default: figures/final_figures).",
+        help="Destination for --mosaics-only PNGs and provenance (default: figures).",
     )
     parser.add_argument(
         "--sampler",
@@ -1419,14 +1419,14 @@ def main():
             path = value if value is not None else Path(default)
             return path if path.is_absolute() else project_root / path
         study = project_path(args.cached_study, "reconstructions/noise_sampler_clean")
-        figure_dir = project_path(args.figure_dir, "figures/final_figures")
+        figure_dir = project_path(args.figure_dir, "figures")
         gt, pred, diff, provenance = build_cached_demeaned_mosaics(
             study, region_key, CKPT_PATH, max_tiles=args.max_tiles, root=project_root,data_root=args.data_root,
         )
         if provenance["subset_only"] and args.figure_dir is None:
             parser.error("A subset study requires a separate --figure-dir")
         figure_dir.mkdir(parents=True, exist_ok=True)
-        figure = figure_dir / f"{region_key}_mosaic_2d_demeaned.png"
+        figure = figure_dir / f"mosaics_{'pond' if region_key == 'pondinlet' else region_key}.png"
         temporary_figure = figure.with_name(f".{figure.stem}.tmp.png")
         split_stack = args.split_stack or region_key == "tuk"
         plot_demeaned_color_relief(

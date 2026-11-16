@@ -1,8 +1,8 @@
 {
   "analysis_manifest_sha256": "259dbbafafca9e2c593bdf2acaa1f023753ce1e59217d53229259d4521c496a5",
   "files": {
-    "figure5_patch12556_corrected.pdf": "ae5bf9a23751b1fb48fe316d936f0cad06903f1b4274ef9ec6a734f33c10c3c9",
-    "figure5_patch12556_corrected.png": "b8f3e3e25c8e3bcd70b448b3276cb9be8df5d79676b4c56bebe226fe45a445c7"
+    "single_patch_analysis.pdf": "ae5bf9a23751b1fb48fe316d936f0cad06903f1b4274ef9ec6a734f33c10c3c9",
+    "single_patch_analysis.png": "b8f3e3e25c8e3bcd70b448b3276cb9be8df5d79676b4c56bebe226fe45a445c7"
   },
   "interpretation": "Illustrative centered shape diagnostics; not a replacement for frozen paper metrics",
   "panel_data": null,

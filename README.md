@@ -7,7 +7,7 @@ trend and each patch's valid-pixel mean have been removed. Recovering absolute
 elevation requires those components or an equivalent reference. The output grid
 has 10 times finer linear spacing and 100 times the pixel density of the input.
 
-![Conditional diffusion architecture](figures/final_figures/model_diagram.png)
+![Conditional diffusion architecture](figures/model_diagram.png)
 
 The repository includes training, evaluation and roughness analysis code,
 figures, portable split assignments, and one paired LiDAR/Sentinel-2 sample.
@@ -78,7 +78,7 @@ The [dataset loader](src/data/dataset.py) applies these transforms:
   scaled zenith for solar and viewing geometry; and signed acquisition age
   in days divided by 30.
 
-![Example LiDAR patch, validity mask and six optical views](figures/final_figures/sample_patch.png)
+![Example LiDAR patch, validity mask and six optical views](figures/sample_patch.png)
 
 ## Model and paper configuration
 
@@ -115,9 +115,10 @@ The checkpoint with the lowest validation loss is retained.
 ## Repository layout
 
 ```text
-requirements.txt                 # Current study environment dependencies
+requirements.txt                 # Runtime dependencies
 config.yaml                      # Primary cosine configuration
-configs/figure5.yaml              # Roughness analysis and plot settings
+configs/roughness.yaml            # Roughness analysis and plot settings
+metadata/checkpoints.json        # Checkpoint checksums and split compatibility
 splits/                          # Paper configurations and portable split IDs
 docs/baseline_data_split.md       # Shared split protocol
 src/data/                        # Dataset loading and transforms
@@ -127,15 +128,14 @@ src/utils/                       # Metrics, split checks and training recovery
 scripts/                         # Training, evaluation and analysis
 notebooks/                       # Data preparation and visualisation
 tests/                           # CPU-compatible unit tests
-figures/final_figures/            # Current paper assets and provenance
+figures/                         # Final paper figures and provenance
 input_data/sample_lidar_patch/    # Tracked example residual and mask
 input_data/sample_s2_patch/       # Tracked six-view example and metadata
 ```
 
 Full data, checkpoints and study outputs are stored locally under
 `input_data/`, `models/` and `reconstructions/` and ignored by Git, apart
-from the already tracked samples. Historical development scripts/notebooks
-remain in the tree; the commands below identify the paper workflow.
+from the already tracked samples. The commands below identify the paper workflow.
 
 ## Installation and sample loading
 
@@ -229,8 +229,8 @@ Portable manifests (`splits/*_portable.json`) verify input contents with SHA-256
 and bind them to split membership and geometry. They work with copied data whose
 timestamps differ. Use `--data-root /path/to/input_data` with preparation, training
 or evaluation preparation. Historical timestamp-based inventories remain
-unchanged. The release registry binds the original checkpoints to the portable
-inventories by their exact file checksums; membership alone is insufficient.
+unchanged. The checkpoint registry in `metadata/checkpoints.json` binds the original
+checkpoints to the portable inventories by their exact file checksums; membership alone is insufficient.
 
 Train the three paper models using explicit configuration paths:
 
@@ -257,7 +257,8 @@ bash scripts/train_roughnet.sh cosine_tuk_heldout
 
 The checkpoint names are `roughnet_cosine_best.pth`, `roughnet_linear_best.pth`
 and `roughnet_cosine_tuk_heldout_best.pth`. The selected epochs are 166, 93 and 134.
-Original historical files are retained; publication copies have identical bytes.
+Checkpoint checksums and split compatibility are recorded in
+[metadata/checkpoints.json](metadata/checkpoints.json).
 
 ## Evaluation and baselines
 
@@ -351,31 +352,35 @@ study directory for changed inputs/runtimes; retain historical provenance.
 
 ## Roughness analysis and figures
 
-The [Figure 5 configuration](configs/figure5.yaml) reads scored cosine PLMS
-caches from `reconstructions/noise_sampler_clean/`. After completing that study:
+The [roughness configuration](configs/roughness.yaml) selects scored cosine PLMS
+caches. It defaults to the original paper study at
+`reconstructions/noise_sampler_clean/`; for newly generated results, set
+`sets.corrected.study` to `reconstructions/roughnet_noise_sampler/`. Once the
+selected study is complete:
 
 ```bash
-bash scripts/run_figure5_analysis.sh
+bash scripts/run_roughness_analysis.sh
 ```
 
 This runs resumable CPU analysis and plotting on all 3,401 validation/test
-patches. `FIG5_WORKERS` sets worker count (default 2). Individual stages are:
+patches. `ROUGHNESS_WORKERS` sets worker count (default 2). Individual stages are:
 
 ```bash
-python scripts/figure5_analysis.py prepare
-OMP_NUM_THREADS=1 python scripts/figure5_analysis.py run --workers 2
-python scripts/figure5_analysis.py summarize
-python scripts/plot_figure5.py
+python scripts/roughness_analysis.py prepare
+OMP_NUM_THREADS=1 python scripts/roughness_analysis.py run --workers 2
+python scripts/roughness_analysis.py summarize
+python scripts/plot_roughness.py --out reconstructions/roughnet_roughness
 ```
 
-New statistics and fit records go to `reconstructions/roughnet_fig5/`.
+New statistics and fit records go to `reconstructions/roughnet_roughness/`.
 Analysis covers RMS height, Lin's concordance and Spearman correlation,
 exponential variograms with a 200 m maximum lag, centred 1 m distribution
 JSD, and Normal, Skew-Normal, Gamma and Log-Normal fits. Roughness classes
 use RMS-height thresholds of 5, 10 and 20 cm. Single-scale JSD here differs
 from the multi-scale evaluation metric. Failed, upper-bound and
 beyond-observed-lag fits are identified. Plot styling can be changed in
-`configs/figure5.yaml` without changing frozen analysis settings.
+`configs/roughness.yaml` without changing frozen analysis settings.
+To plot an existing completed analysis, pass its directory with `--out`.
 
 Regenerate regional mosaics from the completed cosine PLMS caches on CPU:
 
@@ -387,7 +392,7 @@ python scripts/evaluation.py --region cambridge --mosaics-only
 
 These commands require caches, the matching checkpoint and LiDAR grids;
 they do not sample again. Images and provenance JSONs go to
-`figures/final_figures/`. Mosaics blend patch-wise residuals on valid LiDAR
+`figures/`. Mosaics blend patch-wise residuals on valid LiDAR
 support. Ground truth and predictions share a ±0.5 m symmetric-log scale;
 errors use a linear ±0.5 m scale. These are residual mosaics, not absolute
 regional elevation maps.
@@ -396,76 +401,49 @@ regional elevation maps.
 patch reconstruction and conditioning-ablation plots, using the primary
 checkpoint and local prepared data/caches.
 
-All 11 final manuscript figures are included under `figures/final_figures/`.
-Nine supplied Overleaf files are byte-identical to existing assets; their
-existing names are retained. The supplied map and final conditioning panel
-have been added. [The figure inventory](release/figures.json) records the
-manuscript filenames, repository paths and SHA-256 checksums.
+All 11 final manuscript figures are stored directly in `figures/`, using the
+filenames from the paper. [The figure inventory](figures/manifest.json) records
+their SHA-256 checksums. The single-patch, regional roughness and regional
+structure figures also have PDF versions and JSON provenance records.
 
-| Paper figure | Overleaf filename | Repository asset under `figures/final_figures/` |
-|---|---|---|
-| Main 1: regional map | `lidar_map.pdf` | `lidar_map.pdf` |
-| Main 2: model | `model_diagram.png` | `model_diagram.png` |
-| Main 3: patch reconstructions | `patch_reconstructions_pdfs.png` | `patch_recontructions_pdfs_clean.png` |
-| Main 4: Tuktoyaktuk mosaic | `mosaics_tuk.png` | `tuk_mosaic_2d_demeaned.png` |
-| Main 5: single-patch analysis | `single_patch_analysis.png` | `figure5/figure5_patch12556_corrected.png` |
-| Main 6: regional roughness | `patch_wise_roughness.png` | `figure5/figure5_extended_roughness_corrected.png` |
-| Supplement S1: conditioning examples | `condition_ablation_patch_reconstructions.png` | `condition_ablation_patch_reconstructions.png` |
-| Supplement S2: Pond Inlet mosaic | `mosaics_pond.png` | `pondinlet_mosaic_2d_demeaned.png` |
-| Supplement S3: Cambridge Bay mosaic | `mosaics_cambridge.png` | `cambridge_mosaic_2d_demeaned.png` |
-| Supplement S4: structure statistics | `patch_wise_structure.png` | `figure5/figure5_extended_structure_corrected.png` |
-| Supplement S5: sample | `sample_patch.png` | `sample_patch.png` |
+| Paper figure | File |
+|---|---|
+| Main 1: regional map | [lidar_map.pdf](figures/lidar_map.pdf) |
+| Main 2: model | [model_diagram.png](figures/model_diagram.png) |
+| Main 3: patch reconstructions | [patch_reconstructions_pdfs.png](figures/patch_reconstructions_pdfs.png) |
+| Main 4: Tuktoyaktuk mosaic | [mosaics_tuk.png](figures/mosaics_tuk.png) |
+| Main 5: single-patch analysis | [single_patch_analysis.png](figures/single_patch_analysis.png) |
+| Main 6: regional roughness | [patch_wise_roughness.png](figures/patch_wise_roughness.png) |
+| Supplement S1: conditioning examples | [condition_ablation_patch_reconstructions.png](figures/condition_ablation_patch_reconstructions.png) |
+| Supplement S2: Pond Inlet mosaic | [mosaics_pond.png](figures/mosaics_pond.png) |
+| Supplement S3: Cambridge Bay mosaic | [mosaics_cambridge.png](figures/mosaics_cambridge.png) |
+| Supplement S4: structure statistics | [patch_wise_structure.png](figures/patch_wise_structure.png) |
+| Supplement S5: sample | [sample_patch.png](figures/sample_patch.png) |
 
-Single-patch and regional roughness/structure figures also have PDF and
-provenance JSON versions. Additional historical figures are retained; the
-release inventory selects the final manuscript assets.
+## Reproduce the paper tables and verify checkpoints
 
-## Publication preparation and archived results
-
-The release preparation commands preserve all historical inputs and study outputs:
+The CPU table exporter reads measured per-patch results and produces CSV, JSON
+and LaTeX for main Tables 1–2 and Supplementary Tables S1–S2. It computes
+equal-region averages and mean ranks from unrounded values and verifies the
+exact shared 168-patch Tuktoyaktuk cohort.
 
 ```bash
-# Bootstrap portable content inventories and byte-identical named weights
-# from the original audited local inputs:
-python scripts/prepare_release.py checkpoints
-python scripts/verify_checkpoint.py --smoke-inference
-# Verify a copied full dataset against the publication inventory:
-python scripts/verify_checkpoint.py --verify-data --data-root /path/to/copied/input_data
-# Export measured paper tables without model imports or GPU inference:
 python scripts/export_paper_tables.py --allow-incomplete
-# Prepare an isolated source checkout and separate weights/results archive:
-python scripts/prepare_release.py build --allow-incomplete
+python scripts/verify_checkpoint.py --smoke-inference
+python scripts/verify_checkpoint.py --verify-data --data-root /path/to/input_data
 ```
 
-Table export reads the historical measured studies by default. It generates CSV,
-JSON and LaTeX for main Tables 1–2 and Supplementary Tables S1–S2, including ranks
-and the exact shared 168 Tuktoyaktuk IDs. Without `--allow-incomplete`, it requires
-`--unet-results` with the colleague's Cambridge test per-patch metrics. Draft
-outputs explicitly identify the absent baseline; manuscript numbers are never
-substituted. The original checkpoints and historical model configurations remain
-unchanged internally.
+The exporter uses the original measured study directories by default; use
+`--results-root` to point to an extracted results archive. Without
+`--allow-incomplete`, it requires `--unet-results` with the deterministic U-Net's
+Cambridge Bay per-patch metrics. Draft tables explicitly identify the missing
+baseline row. Generated tables are stored in `results/paper/`.
 
-The isolated release tree under `build/release/software/` omits development
-leftovers and surplus figures. `build/release/artifacts/` contains the selected
-weights, per-patch measurements, donor assignments, derived statistical arrays,
-cohort IDs and source provenance. It excludes full prepared datasets, recovery
-weights and prediction caches containing ground-truth arrays. Both trees have
-checksums and ZIP archives. Reproduce the tables from the extracted artifacts
-using the exporter with its `results/` and `splits/` directories; no Git history,
-prepared raster inputs or GPU is required.
-
-`release/publication.json` records unresolved publication gates. Licenses and the
-U-Net implementation/checkpoint/configuration/results must be supplied before a
-complete build. Final manuscript figures are confirmed and verified against
-`release/figures.json`. No license or DOI is assumed.
-See the [release checklist](docs/release_checklist.md) and
-[manuscript Code Availability wording](docs/code_availability.md).
-
-The journal requires a DOI-backed software deposit. Enable Zenodo's GitHub
-integration before the final GitHub release, archive the staged software tree,
-and cite its **version-specific software DOI** in Code Availability. The separate
-weights/results deposit supplements that software record. No public release or
-Zenodo deposit is created by these local commands.
+Checkpoint verification checks the file checksum and its recorded split
+identity. `--verify-data` checks a prepared dataset against the portable content
+inventory. `--smoke-inference` runs a bounded single forward pass on the included
+sample; it does not run full diffusion sampling. These commands require the
+corresponding checkpoint and, for full data verification, its prepared inventory.
 
 ## Tests and interpretation
 
