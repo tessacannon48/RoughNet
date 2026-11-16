@@ -6,7 +6,7 @@
   "artifacts_doi": null,
   "unet_checkpoint": null,
   "unet_results": null,
-  "final_panels_confirmed": false,
+  "final_panels_confirmed": true,
   "software_creators": [
     "Tessa Cannon",
     "Michel Tsamados",

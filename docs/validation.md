@@ -22,8 +22,10 @@ The release implementation was checked locally with:
   architecture. These checks do not constitute full 1,000-step diffusion reruns.
 - README links, example syntax, shell syntax, CLI argument parsing and release
   allowlist checks.
+- All 11 final manuscript figures matching the supplied Overleaf files and
+  their inventory checksums, with all 11 included in the software archive.
 - Strict release preparation refusing to proceed without licenses, the baseline
-  contribution and final figure confirmation.
+  contribution and matching final figure checksums.
 
 CUDA is unavailable in this execution environment, so no new GPU inference or
 full training was performed. The historical paper runtime is recorded in

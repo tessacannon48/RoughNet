@@ -24,9 +24,6 @@ SCRIPT_NAMES=('__init__.py','train_roughnet.py','train_roughnet.sh','prepare_spa
  'run_alternate_fold_evaluation.sh','image_free_baseline.py','run_image_free_baseline.sh',
  'figure5_analysis.py','fig5_statistics.py','plot_figure5.py','run_figure5_analysis.sh',
  'export_paper_tables.py','prepare_release.py','verify_checkpoint.py')
-FIGURES=('model_diagram.png','sample_patch.png','patch_recontructions_pdfs_clean.png','conditioning_ablation_examples.png',
- 'tuk_mosaic_2d_demeaned.png','pondinlet_mosaic_2d_demeaned.png','cambridge_mosaic_2d_demeaned.png',
- 'figure5/figure5_patch12556_corrected.png','figure5/figure5_extended_roughness_corrected.png','figure5/figure5_extended_structure_corrected.png')
 STUDIES=('noise_sampler_clean','conditioning_ablation_clean','tuk_heldout_clean_evaluation','image_free_baseline_clean','fig5_extended_clean')
 
 
@@ -98,13 +95,19 @@ def release_gates(repo,metadata):
   missing.append('unet_epoch: selected baseline checkpoint epoch')
  if not metadata.get('unet_code') or any(not (repo/p).is_file() for p in metadata.get('unet_code',[])):
   missing.append('unet_code: colleague implementation')
- if not (repo/'figures/lidar_map.pdf').is_file():missing.append('figures/lidar_map.pdf')
+ figures=repo/'release/figures.json'
+ if not figures.is_file():missing.append('release/figures.json: final manuscript figure inventory')
+ else:
+  for record in json.loads(figures.read_text())['figures']:
+   path=repo/record['path']
+   if not path.is_file():missing.append(record['path'])
+   elif sha(path)!=record['sha256']:missing.append(record['path']+': differs from final manuscript figure')
  if not metadata.get('final_panels_confirmed'):missing.append('final illustrative panel confirmation')
  return missing
 
 
 def software_files(repo,metadata):
- files=[Path(x) for x in ('README.md','config.yaml','requirements.txt','requirements-notebooks.txt','requirements-dev.txt','CITATION.cff','src/requirements.txt','release/publication.json','release/checkpoints.json',
+ files=[Path(x) for x in ('README.md','config.yaml','requirements.txt','requirements-notebooks.txt','requirements-dev.txt','CITATION.cff','src/requirements.txt','release/publication.json','release/checkpoints.json','release/figures.json',
   'docs/baseline_data_split.md','docs/release_checklist.md','docs/code_availability.md','docs/validation.md','configs/figure5.yaml',
   '.github/workflows/tests.yml',
   'splits/train_val_split_ids.json','splits/tuk_heldout_clean_ids.json')]
@@ -114,13 +117,13 @@ def software_files(repo,metadata):
  files += [p.relative_to(repo) for p in (repo/'environment').glob('*') if p.is_file()]
  files += [Path('splits')/(n+'.yaml') for n in PAPER]
  files += [Path('notebooks')/n for n in ('data_collocation.ipynb','patching.ipynb','patch_inference.ipynb')]
- for n in FIGURES:
-  p=Path('figures/final_figures')/n;files.append(p)
+ for record in json.loads((repo/'release/figures.json').read_text())['figures']:
+  p=Path(record['path']);files.append(p)
   for suffix in ('.json','.pdf'):
    if (repo/p.with_suffix(suffix)).is_file():files.append(p.with_suffix(suffix))
  for folder in ('input_data/sample_lidar_patch','input_data/sample_s2_patch'):
   files += [p.relative_to(repo) for p in (repo/folder).rglob('*') if p.is_file() and not p.name.endswith('.aux.xml')]
- for name in ('LICENSE','LICENSE.artifacts','figures/lidar_map.pdf'):
+ for name in ('LICENSE','LICENSE.artifacts'):
   if (repo/name).is_file():files.append(Path(name))
  for name in metadata.get('unet_code') or []:files.append(Path(name))
  if metadata.get('unet_config'):files.append(Path(metadata['unet_config']))

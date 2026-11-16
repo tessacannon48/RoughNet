@@ -396,26 +396,29 @@ regional elevation maps.
 patch reconstruction and conditioning-ablation plots, using the primary
 checkpoint and local prepared data/caches.
 
-Manuscript names differ from current asset names. This mapping identifies
-assets under `figures/final_figures/`; final panel selection and filename
-alignment remain part of release preparation.
+All 11 final manuscript figures are included under `figures/final_figures/`.
+Nine supplied Overleaf files are byte-identical to existing assets; their
+existing names are retained. The supplied map and final conditioning panel
+have been added. [The figure inventory](release/figures.json) records the
+manuscript filenames, repository paths and SHA-256 checksums.
 
-| Paper figure | Current asset |
-|---|---|
-| Main 1: regional map | `lidar_map.pdf` will be supplied in `figures/` |
-| Main 2: model | `model_diagram.png` |
-| Main 3: patch reconstructions | `patch_recontructions_pdfs_clean.png` (confirm final panels) |
-| Main 4: Tuktoyaktuk mosaic | `tuk_mosaic_2d_demeaned.png` |
-| Main 5: single-patch analysis | `figure5/figure5_patch12556_corrected.png` |
-| Main 6: regional roughness | `figure5/figure5_extended_roughness_corrected.png` |
-| Supplement S1: conditioning examples | `conditioning_ablation_examples.png` (confirm final panels) |
-| Supplement S2: Pond Inlet mosaic | `pondinlet_mosaic_2d_demeaned.png` |
-| Supplement S3: Cambridge Bay mosaic | `cambridge_mosaic_2d_demeaned.png` |
-| Supplement S4: structure statistics | `figure5/figure5_extended_structure_corrected.png` |
-| Supplement S5: sample | `sample_patch.png` |
+| Paper figure | Overleaf filename | Repository asset under `figures/final_figures/` |
+|---|---|---|
+| Main 1: regional map | `lidar_map.pdf` | `lidar_map.pdf` |
+| Main 2: model | `model_diagram.png` | `model_diagram.png` |
+| Main 3: patch reconstructions | `patch_reconstructions_pdfs.png` | `patch_recontructions_pdfs_clean.png` |
+| Main 4: Tuktoyaktuk mosaic | `mosaics_tuk.png` | `tuk_mosaic_2d_demeaned.png` |
+| Main 5: single-patch analysis | `single_patch_analysis.png` | `figure5/figure5_patch12556_corrected.png` |
+| Main 6: regional roughness | `patch_wise_roughness.png` | `figure5/figure5_extended_roughness_corrected.png` |
+| Supplement S1: conditioning examples | `condition_ablation_patch_reconstructions.png` | `condition_ablation_patch_reconstructions.png` |
+| Supplement S2: Pond Inlet mosaic | `mosaics_pond.png` | `pondinlet_mosaic_2d_demeaned.png` |
+| Supplement S3: Cambridge Bay mosaic | `mosaics_cambridge.png` | `cambridge_mosaic_2d_demeaned.png` |
+| Supplement S4: structure statistics | `patch_wise_structure.png` | `figure5/figure5_extended_structure_corrected.png` |
+| Supplement S5: sample | `sample_patch.png` | `sample_patch.png` |
 
 Single-patch and regional roughness/structure figures also have PDF and
-provenance JSON versions. Historical figure files remain pending final cleanup.
+provenance JSON versions. Additional historical figures are retained; the
+release inventory selects the final manuscript assets.
 
 ## Publication preparation and archived results
 
@@ -451,9 +454,10 @@ checksums and ZIP archives. Reproduce the tables from the extracted artifacts
 using the exporter with its `results/` and `splits/` directories; no Git history,
 prepared raster inputs or GPU is required.
 
-`release/publication.json` records unresolved publication gates. Licenses, the
-U-Net implementation/checkpoint/configuration/results, final map and illustrative
-panels must be confirmed before a complete build. No license or DOI is assumed.
+`release/publication.json` records unresolved publication gates. Licenses and the
+U-Net implementation/checkpoint/configuration/results must be supplied before a
+complete build. Final manuscript figures are confirmed and verified against
+`release/figures.json`. No license or DOI is assumed.
 See the [release checklist](docs/release_checklist.md) and
 [manuscript Code Availability wording](docs/code_availability.md).
 

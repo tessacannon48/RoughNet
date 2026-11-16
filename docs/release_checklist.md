@@ -24,14 +24,18 @@ locally first; the tools here never create a GitHub release or publish a deposit
 6. Inspect `build/release/readiness.json` and the archive checksums. Fill pending
    publication metadata in `release/publication.json` only when confirmed.
 
+All 11 final main and supplementary figures supplied from Overleaf are present
+under `figures/final_figures/`. `release/figures.json` maps manuscript filenames
+to repository assets and binds their checksums. Release preparation verifies
+these files and includes them in the software archive. Additional historical
+figures can remain in the development repository.
+
 ## Required before publication
 
 - Collaborator-selected code and artifact licenses, with the corresponding
   license text and source-data terms. No permissive license is assumed.
 - Weibin's baseline implementation integrated into the source tree, its selected
   checkpoint (`roughnet_unet_baseline_best.pth`), config, selected epoch and per-patch measurements.
-- Final `figures/lidar_map.pdf` and confirmation of the illustrative patch and
-  conditioning panels.
 - A final build without `--allow-incomplete`, passing tests, validated
   `CITATION.cff`, clean-checkout installation and inference checks.
 
