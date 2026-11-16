@@ -128,7 +128,7 @@ class LidarS2Dataset(Dataset):
         name = os.path.basename(os.path.normpath(lidar_root_path)).lower()
         if "cambridge" in name:
             return _dt.date(2024, 4, 18)
-        if "tuq" in name:
+        if "tuk" in name:
             return _dt.date(2024, 4, 16)
         if "pondinlet" in name:
             return _dt.date(2024, 4, 26)
