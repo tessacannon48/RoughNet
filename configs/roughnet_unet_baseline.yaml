@@ -1,0 +1,43 @@
+# Integration defaults matching the primary paper architecture and the supplied
+# trainer. The colleague's exact executed run configuration is still needed to
+# verify the selected publication checkpoint; these defaults do not certify it.
+model_type: deterministic_unet
+baseline:
+  name: roughnet_unet_baseline
+  seed: 42
+  zero_lidar_input: true
+  fixed_timestep: 0
+  wandb: false
+data:
+  train_locations: [pondinlet, tuk]
+  lidar_dirs: [input_data/lidar_patches_pondinlet, input_data/lidar_patches_tuk]
+  s2_dirs: [input_data/s2_patches_pondinlet, input_data/s2_patches_tuk]
+  split_ids: splits/train_val_split_ids.json
+  split_manifest: splits/original_clean_portable.json
+  pixel_size_m: 1.0
+training:
+  batch_size: 8
+  epochs: 200
+  lr: 0.0001
+  num_workers: 16
+  context_k: 6
+  randomize_context: true
+  loss: {name: masked_hybrid_mse_loss, alpha: 1.0}
+model:
+  unet_depth: 4
+  base_channels: 64
+  embed_dim: 256
+  attention_variant: mid
+logging:
+  wandb_project: rough_net
+  run_name: roughnet_unet_baseline
+  save_dir: models/roughnet_unet_baseline
+evaluation:
+  jsd_scales_m: [1.0, 2.0, 5.0, 10.0]
+  jsd_bins: 256
+  nae_use_sobel: true
+  nae_degrees: true
+  psd_window: true
+system:
+  device: auto
+  debug: false
