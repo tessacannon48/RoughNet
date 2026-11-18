@@ -13,7 +13,8 @@ The repository includes training, evaluation and roughness analysis code,
 figures, portable split assignments, and one paired LiDAR/Sentinel-2 sample.
 The full prepared dataset, trained checkpoints and evaluation caches are not
 included in Git. Full-study commands below require those inputs. The
-deterministic U-Net baseline in the paper is being contributed separately.
+deterministic U-Net training and evaluation code is included; its evaluated
+checkpoint and per-patch paper results have not yet been supplied.
 
 ## Data sources and upstream LiDAR processing
 
@@ -118,6 +119,7 @@ The checkpoint with the lowest validation loss is retained.
 requirements.txt                 # Runtime dependencies
 config.yaml                      # Primary cosine configuration
 configs/roughness.yaml            # Roughness analysis and plot settings
+configs/roughnet_unet_baseline.yaml # Deterministic baseline training defaults
 metadata/checkpoints.json        # Checkpoint checksums and split compatibility
 splits/                          # Paper configurations and portable split IDs
 docs/baseline_data_split.md       # Shared split protocol
@@ -321,6 +323,50 @@ inference-time control, rather than a trained unconditional model.
 `reconstructions/roughnet_conditioning/` contains summary/per-patch
 CSVs, paired deltas, a LaTeX table and float32 prediction archives. Use this
 corrected launcher; generic conditioning preparation retains historical defaults.
+
+### Deterministic U-Net baseline
+
+Weibin Chen's regression baseline uses the same `ConditionalUNet`, six-view
+conditioning, dataset processing, masked loss and Adam optimizer as RoughNet.
+It predicts the residual field in one forward pass with a zero LiDAR input and
+timestep fixed at 0. It does not use diffusion sampling. Training uses the
+primary spatial split, with the best checkpoint selected by validation loss.
+
+```bash
+bash scripts/train_unet_baseline.sh
+# Select a different interpreter through PYTHON_BIN, as for other launchers.
+# CPU execution and zero-worker loading are also supported:
+python scripts/train_unet_baseline.py --device cpu --num-workers 0
+```
+
+The explicit configuration is `configs/roughnet_unet_baseline.yaml`. Its defaults
+follow the audited primary RoughNet settings; the exact configuration used for
+the reported baseline run has not been supplied. Use `--data-root` to relocate
+the prepared inputs. Training verifies the primary IDs and portable content
+inventory. Checkpoints are saved under `models/roughnet_unet_baseline/` as
+`roughnet_unet_baseline_best.pth` and `roughnet_unet_baseline_latest.pth`.
+Exact epoch-boundary recovery with `--resume` is supported for runs trained with
+`--num-workers 0`. Legacy and multiworker checkpoints can be loaded for evaluation;
+their unsaved worker RNG state prevents exact training recovery.
+
+Evaluate a selected baseline checkpoint on the Cambridge Bay test cohort:
+
+```bash
+python scripts/evaluate_unet_baseline.py \
+  --checkpoint models/roughnet_unet_baseline/roughnet_unet_baseline_best.pth \
+  --split test
+python scripts/export_paper_tables.py \
+  --unet-results reconstructions/roughnet_unet_baseline/test/per_patch.csv \
+  --out results/paper_with_unet
+```
+
+Evaluation loads the checkpoint's saved model configuration and uses the same
+eight per-patch metrics as the RoughNet comparisons. Results are stored under
+`reconstructions/roughnet_unet_baseline/{validation,test}/`, with equally weighted
+patch averages. Legacy checkpoints from the original contributed script require
+their original split CSV through `--legacy-splits` to verify training membership.
+The evaluated paper checkpoint, selected epoch and measurements remain pending;
+the current paper tables explicitly omit that row.
 
 ### Image-free empirical baseline
 
