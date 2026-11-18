@@ -13,8 +13,9 @@ The repository includes training, evaluation and roughness analysis code,
 figures, portable split assignments, and one paired LiDAR/Sentinel-2 sample.
 The full prepared dataset, trained checkpoints and evaluation caches are not
 included in Git. Full-study commands below require those inputs. The
-deterministic U-Net training and evaluation code is included; its evaluated
-checkpoint and per-patch paper results have not yet been supplied.
+deterministic U-Net training and evaluation code and its reported summary
+metrics are included. Its checkpoint and individual patch measurements are
+not included in the source checkout.
 
 ## Data sources and upstream LiDAR processing
 
@@ -339,10 +340,12 @@ bash scripts/train_unet_baseline.sh
 python scripts/train_unet_baseline.py --device cpu --num-workers 0
 ```
 
-The explicit configuration is `configs/roughnet_unet_baseline.yaml`. Its defaults
-follow the audited primary RoughNet settings; the exact configuration used for
-the reported baseline run has not been supplied. Use `--data-root` to relocate
-the prepared inputs. Training verifies the primary IDs and portable content
+The explicit configuration is `configs/roughnet_unet_baseline.yaml`. The baseline
+author confirmed 64 base channels, mid attention, hybrid loss with alpha = 1,
+random context with six views, the corrected split and validation-loss checkpoint
+selection. These settings are included in the configuration; the remaining
+training/runtime defaults are not a complete archived run record. Use
+`--data-root` to relocate the prepared inputs. Training verifies the primary IDs and portable content
 inventory. Checkpoints are saved under `models/roughnet_unet_baseline/` as
 `roughnet_unet_baseline_best.pth` and `roughnet_unet_baseline_latest.pth`.
 Exact epoch-boundary recovery with `--resume` is supported for runs trained with
@@ -365,8 +368,17 @@ eight per-patch metrics as the RoughNet comparisons. Results are stored under
 `reconstructions/roughnet_unet_baseline/{validation,test}/`, with equally weighted
 patch averages. Legacy checkpoints from the original contributed script require
 their original split CSV through `--legacy-splits` to verify training membership.
-The evaluated paper checkpoint, selected epoch and measurements remain pending;
-the current paper tables explicitly omit that row.
+The [reported Cambridge Bay summary](results/reported/unet_baseline.csv) reproduces
+the U-Net row in manuscript Table 2 at its published precision.
+[Its provenance](results/reported/unet_baseline.json) records the author's method
+confirmation and validation RMSEs. The equal-region validation RMSE is
+(0.0618 + 0.0890) / 2 = 0.0754 m, displayed as 0.075 m; the Cambridge Bay test
+RMSE is 0.072 m.
+
+These are reported summaries, not independently recomputed measurements. The
+table exporter still requires actual per-patch results through `--unet-results`
+to recompute the baseline row. The checkpoint and selected epoch cannot be
+recovered from the table.
 
 ### Image-free empirical baseline
 

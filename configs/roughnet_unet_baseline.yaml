@@ -1,6 +1,6 @@
-# Integration defaults matching the primary paper architecture and the supplied
-# trainer. The colleague's exact executed run configuration is still needed to
-# verify the selected publication checkpoint; these defaults do not certify it.
+# Model, loss, six-view random context and corrected split confirmed by Weibin
+# Chen. Other training/runtime values follow the primary RoughNet defaults;
+# they are not a complete archived configuration of the evaluated baseline run.
 model_type: deterministic_unet
 baseline:
   name: roughnet_unet_baseline

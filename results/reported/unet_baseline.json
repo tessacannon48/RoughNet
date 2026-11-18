@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "kind": "reported_rounded_summary",
+  "source": "Main manuscript Table 2, confirmed by baseline author Weibin Chen in correspondence supplied by the manuscript author",
+  "csv": "unet_baseline.csv",
+  "precision": "Values retain manuscript display precision; unrounded per-patch measurements were not supplied.",
+  "independently_recomputed": false,
+  "cohort": {
+    "region": "cambridge",
+    "split": "test",
+    "n": 2111
+  },
+  "confirmed_protocol": {
+    "architecture": "RoughNet final ConditionalUNet with ASAP fusion",
+    "base_channels": 64,
+    "attention_variant": "mid",
+    "loss": "masked_hybrid_mse_loss",
+    "loss_alpha": 1.0,
+    "context_k": 6,
+    "randomize_context": true,
+    "split": "corrected primary spatial split",
+    "lidar_input": "zeros",
+    "timestep": 0,
+    "checkpoint_selection": "minimum validation loss",
+    "input": "Sentinel-2 conditioning only; no ground-truth LiDAR is passed as model input"
+  },
+  "reported_validation_rmse": {
+    "pondinlet": {
+      "n": 1122,
+      "rmse_m": "0.0618"
+    },
+    "tuk": {
+      "n": 168,
+      "rmse_m": "0.0890"
+    },
+    "equal_region": {
+      "rmse_m": "0.0754",
+      "displayed_rmse_m": "0.075",
+      "aggregation": "Arithmetic mean of the two region-level patch-mean RMSEs; not a patch-count-weighted mean."
+    }
+  },
+  "not_recovered_from_summary": [
+    "checkpoint weights",
+    "selected epoch",
+    "unrounded per-patch measurements",
+    "complete executed run configuration"
+  ],
+  "use": "Reference values reported in the paper. This aggregate CSV is not a per-patch input to export_paper_tables.py."
+}

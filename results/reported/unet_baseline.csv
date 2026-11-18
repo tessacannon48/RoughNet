@@ -1,0 +1,2 @@
+region,split,method,n,rmse_m,bias_m,sigma_error_pct,nae_deg,zncc,jsd,log_psd_rmse,nrmse_sigma
+cambridge,test,deterministic_unet,2111,0.072,-0.0018,46.40,0.726,0.390,0.1339,2.535,0.939
