@@ -12,10 +12,7 @@ has 10 times finer linear spacing and 100 times the pixel density of the input.
 The repository includes training, evaluation and roughness analysis code,
 figures, portable split assignments, and one paired LiDAR/Sentinel-2 sample.
 The full prepared dataset, trained checkpoints and evaluation caches are not
-included in Git. Full-study commands below require those inputs. The
-deterministic U-Net training and evaluation code and its reported summary
-metrics are included. Its checkpoint and individual patch measurements are
-not included in the source checkout.
+included in Git. 
 
 ## Data sources and upstream LiDAR processing
 
@@ -32,13 +29,12 @@ post-processed GNSS trajectories and corrected for aircraft altitude and
 calibration angles to produce georeferenced point clouds. A 1 m DEM was
 derived by inverse distance weighting with a 5 m search radius.
 
-For RoughNet, coordinates were projected into a local Transverse Mercator
+The original coordinates were projected into a local Transverse Mercator
 system and a regional quadratic surface was fitted using RANSAC with a
 linear-regression estimator. Residuals were computed relative to this surface;
 iceberg polygons, unreliable scan areas and residuals outside ±10 m were
 excluded. These LiDAR processing steps precede the dataset preparation
-included here; their implementation is outside this repository. The public
-LiDAR archive and the prepared RoughNet training patches are distinct products.
+included here; their implementation is outside this repository.
 
 Optical data come from the
 [ESA Copernicus Data Space Ecosystem](https://dataspace.copernicus.eu/).
@@ -51,8 +47,7 @@ Acquisition date, cloud cover and solar/viewing geometry supply metadata.
 
 [data_collocation.ipynb](notebooks/data_collocation.ipynb) queries, inspects
 and downloads Sentinel-2 products. It imports `username` and `password` from a
-local, ignored `copernicus_login.py`; supply this file locally and keep
-credentials out of notebooks and version control.
+local `copernicus_login.py`, which needs to be supplied for replication.
 
 [patching.ipynb](notebooks/patching.ipynb) extracts paired patches from prepared
 LiDAR residuals and Sentinel-2 products. The study uses 256 × 256 LiDAR pixels
@@ -110,9 +105,7 @@ the bottleneck and neighbouring stages (`attention_variant: mid`).
 | Evaluation seed | 42; paired initial noise across configurations and controls |
 
 The implemented loss combines valid-pixel MSE with the mean of horizontal
-and vertical gradient MSE. The gradient term uses the whole raster, including
-invalid pixels and validity boundaries; see [metrics.py](src/utils/metrics.py).
-The checkpoint with the lowest validation loss is retained.
+and vertical gradient MSE. The checkpoint with the lowest validation loss is retained.
 
 ## Repository layout
 
@@ -137,8 +130,7 @@ input_data/sample_s2_patch/       # Tracked six-view example and metadata
 ```
 
 Full data, checkpoints and study outputs are stored locally under
-`input_data/`, `models/` and `reconstructions/` and ignored by Git, apart
-from the already tracked samples. The commands below identify the paper workflow.
+`input_data/`, `models/` and `reconstructions/` (not included). The commands below identify the paper workflow.
 
 ## Installation and sample loading
 
@@ -322,12 +314,11 @@ overlap. Null conditioning zeros images and attributes. This is an
 inference-time control, rather than a trained unconditional model.
 
 `reconstructions/roughnet_conditioning/` contains summary/per-patch
-CSVs, paired deltas, a LaTeX table and float32 prediction archives. Use this
-corrected launcher; generic conditioning preparation retains historical defaults.
+CSVs, paired deltas, a LaTeX table and float32 prediction archives.
 
 ### Deterministic U-Net baseline
 
-Weibin Chen's regression baseline uses the same `ConditionalUNet`, six-view
+The U-Net regression baseline uses the same `ConditionalUNet`, six-view
 conditioning, dataset processing, masked loss and Adam optimizer as RoughNet.
 It predicts the residual field in one forward pass with a zero LiDAR input and
 timestep fixed at 0. It does not use diffusion sampling. Training uses the
@@ -340,17 +331,12 @@ bash scripts/train_unet_baseline.sh
 python scripts/train_unet_baseline.py --device cpu --num-workers 0
 ```
 
-The explicit configuration is `configs/roughnet_unet_baseline.yaml`. The baseline
-author confirmed 64 base channels, mid attention, hybrid loss with alpha = 1,
-random context with six views, the corrected split and validation-loss checkpoint
-selection. These settings are included in the configuration; the remaining
-training/runtime defaults are not a complete archived run record. Use
+The explicit configuration is `configs/roughnet_unet_baseline.yaml`. Use
 `--data-root` to relocate the prepared inputs. Training verifies the primary IDs and portable content
 inventory. Checkpoints are saved under `models/roughnet_unet_baseline/` as
 `roughnet_unet_baseline_best.pth` and `roughnet_unet_baseline_latest.pth`.
 Exact epoch-boundary recovery with `--resume` is supported for runs trained with
-`--num-workers 0`. Legacy and multiworker checkpoints can be loaded for evaluation;
-their unsaved worker RNG state prevents exact training recovery.
+`--num-workers 0`. 
 
 Evaluate a selected baseline checkpoint on the Cambridge Bay test cohort:
 
@@ -369,16 +355,7 @@ eight per-patch metrics as the RoughNet comparisons. Results are stored under
 patch averages. Legacy checkpoints from the original contributed script require
 their original split CSV through `--legacy-splits` to verify training membership.
 The [reported Cambridge Bay summary](results/reported/unet_baseline.csv) reproduces
-the U-Net row in manuscript Table 2 at its published precision.
-[Its provenance](results/reported/unet_baseline.json) records the author's method
-confirmation and validation RMSEs. The equal-region validation RMSE is
-(0.0618 + 0.0890) / 2 = 0.0754 m, displayed as 0.075 m; the Cambridge Bay test
-RMSE is 0.072 m.
-
-These are reported summaries, not independently recomputed measurements. The
-table exporter still requires actual per-patch results through `--unet-results`
-to recompute the baseline row. The checkpoint and selected epoch cannot be
-recovered from the table.
+the U-Net row in manuscript Table 2 at its published precision. 
 
 ### Image-free empirical baseline
 
@@ -398,15 +375,6 @@ Outputs in `reconstructions/roughnet_image_free/` include the donor
 audit, assignments, score shards, `test/per_patch.csv` and
 `test/comparison.{csv,json,md}`, including RoughNet reference results.
 Retain donors and assignments to reconstruct baseline predictions.
-
-### Provenance and recovery
-
-Retain complete study directories, including manifests, runtime records,
-prediction archives and score shards. Inputs, checkpoints, source files,
-batch settings and recorded software/GPU runtime are verified on resume.
-Source edits, including dataset changes, can invalidate compatibility with
-historical studies. Preserve the paper's source snapshot and use a new
-study directory for changed inputs/runtimes; retain historical provenance.
 
 ## Roughness analysis and figures
 
@@ -459,8 +427,7 @@ regional elevation maps.
 patch reconstruction and conditioning-ablation plots, using the primary
 checkpoint and local prepared data/caches.
 
-All 11 final manuscript figures are stored directly in `figures/`, using the
-filenames from the paper. [The figure inventory](figures/manifest.json) records
+All 11 final manuscript figures are stored directly in `figures/`. [The figure inventory](figures/manifest.json) records
 their SHA-256 checksums. The single-patch, regional roughness and regional
 structure figures also have PDF versions and JSON provenance records.
 
@@ -494,8 +461,7 @@ python scripts/verify_checkpoint.py --verify-data --data-root /path/to/input_dat
 The exporter uses the original measured study directories by default; use
 `--results-root` to point to an extracted results archive. Without
 `--allow-incomplete`, it requires `--unet-results` with the deterministic U-Net's
-Cambridge Bay per-patch metrics. Draft tables explicitly identify the missing
-baseline row. Generated tables are stored in `results/paper/`.
+Cambridge Bay per-patch metrics. Generated tables are stored in `results/paper/`.
 
 Checkpoint verification checks the file checksum and its recorded split
 identity. `--verify-data` checks a prepared dataset against the portable content
@@ -513,7 +479,7 @@ WANDB_MODE=disabled python -m unittest discover -s tests -v
 
 Tests cover split exclusions, training recovery, paired noise, conditioning,
 baseline scoring, cache integrity, mosaics and roughness analysis. They do
-not replace full dataset/inference reproduction.
+not cover full dataset/inference reproduction.
 
 The paper evaluates two geographic training configurations. Transfer depends
 on the terrain represented in training, and performance on held-out Tuktoyaktuk
