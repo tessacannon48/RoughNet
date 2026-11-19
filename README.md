@@ -487,6 +487,10 @@ is poor. Good roughness amplitude/distribution agreement does not establish
 correct placement of individual surface features. The model has not been
 validated as an operational navigation or ice-safety tool.
 
+## License
+
+Code is released under the MIT License. The sample LiDAR patch is derived from [Helm et al. (2026), PANGAEA](https://doi.org/10.1594/PANGAEA.995793), under that dataset’s license. The sample Sentinel-2 patches contain modified Copernicus Sentinel data 2024.
+
 ## Authors and contact
 
 Software creators: **Tessa Cannon, Michel Tsamados and Weibin Chen**.
