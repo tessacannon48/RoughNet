@@ -1369,7 +1369,7 @@ def main():
         "--rotation",
         type=float,
         default=None,
-        help="Manual rotation angle in degrees for demeaned mosaic. Use interactive_rotation.py to find optimal value.",
+        help="Manual rotation angle in degrees for demeaned mosaic.",
     )
     parser.add_argument(
         "--rebuild-mosaic",
