@@ -1,5 +1,5 @@
 """Prepare/run/resume/summarize the corrected 2 schedules x 3 samplers study.
-Run from Dissertation/. Validation and test are explicit separate commands.
+Run from the repository root. Validation and test are explicit separate commands.
 """
 import argparse
 import csv
