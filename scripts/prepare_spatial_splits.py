@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run from Dissertation/. Audit paired raster bounds and prepare geographic folds."""
+"""Run from the repository root. Audit paired raster bounds and prepare geographic folds."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import copy
