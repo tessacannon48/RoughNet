@@ -1,4 +1,4 @@
-"""Reproducible final-checkpoint null/shuffle study. See docs/conditioning_ablation.md."""
+"""Reproducible final-checkpoint null/shuffle study."""
 from __future__ import annotations
 
 import argparse
