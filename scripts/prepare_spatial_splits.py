@@ -96,7 +96,7 @@ def main():
     else:
         for region in REGIONS:
             folders=sorted((args.data_root / f's2_patches_{region}').glob('s2_patch_*'))
-            if not folders: raise ValueError(f'No data for {region}; run from Dissertation/')
+            if not folders: raise ValueError(f'No data for {region}; run from repository root.')
             with ThreadPoolExecutor(max_workers=args.workers) as pool:
                 for i,row in enumerate(pool.map(inspect_patch,[(region,f) for f in folders]),1):
                     inventory.append(row)
