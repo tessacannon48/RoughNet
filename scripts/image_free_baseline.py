@@ -1,7 +1,7 @@
 """Image-free empirical sampler of fully observed, corrected training patches.
 
 No images, test-derived donor selection, fitted model or spatial alignment.
-Run prepare/run/summarize from Dissertation/. All computation is on CPU.
+Run prepare/run/summarize from the repository root. All computation is on CPU.
 """
 import argparse
 import ast
