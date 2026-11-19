@@ -1,6 +1,6 @@
 """Fixed cosine/PLMS evaluation of the Pond Inlet + Cambridge Bay training fold.
 Reuse the corrected evaluator's batching, metrics, archives and recovery checks.
-Run from Dissertation/ and prepare on the machine that will perform inference.
+Run from the repository root and prepare on the machine that will perform inference.
 """
 import argparse
 import fcntl
